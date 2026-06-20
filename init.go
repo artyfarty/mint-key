@@ -42,11 +42,25 @@ func runInit(force bool) error {
 
 	// --- signing mode ---
 	modes := []string{"agent", "token", "software", "wsl-delegate"}
+	modeDesc := map[string]string{
+		"agent":        "CA in the ssh-agent, sign with -U — YubiKey reached via an agent bridge (WSL ↔ Windows)",
+		"token":        "local PKCS#11 — YubiKey plugged into THIS machine (Linux/macOS)",
+		"software":     "CA private key in a file — TESTING ONLY, no hardware",
+		"wsl-delegate": "WSL → Windows ssh-keygen + Windows PKCS#11 (fallback; prefer agent)",
+	}
 	rec := "token"
 	if inWSL() {
 		rec = "agent"
 	}
-	mi, err := promptChoice(fmt.Sprintf("Signing mode (recommended here: %s)", rec), modes)
+	var modeOpts []string
+	for _, m := range modes {
+		label := fmt.Sprintf("%-12s — %s", m, modeDesc[m])
+		if m == rec {
+			label += "  [recommended here]"
+		}
+		modeOpts = append(modeOpts, label)
+	}
+	mi, err := promptChoice("Signing mode — how mintk reaches the CA private key", modeOpts)
 	if err != nil {
 		return err
 	}
