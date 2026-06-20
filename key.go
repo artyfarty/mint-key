@@ -317,3 +317,8 @@ func runOut(name string, args ...string) (string, error) {
 	out, err := exec.Command(name, args...).Output()
 	return strings.TrimSpace(string(out)), err
 }
+
+// runErr runs a command silently and returns only its error (for probes).
+func runErr(name string, args ...string) error {
+	return exec.Command(name, args...).Run()
+}

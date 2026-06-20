@@ -245,11 +245,16 @@ build_install() {
 setup_config() {
   hdr "Config"
   if [ -f "$CONFIG" ]; then ok "config exists: $CONFIG (leaving as-is)"; return; fi
-  mkdir -p "$CONFIG_DIR"
-  info "starting from the example template"
-  cp "$REPO_DIR/config.example.yaml" "$CONFIG"
-  chmod 600 "$CONFIG"
-  ok "wrote $CONFIG — edit it (ca_pub, mode, scopes) before minting"
+  info "no config yet — the best way to create one is the interactive bootstrap:"
+  info "    ${C_DIM}mintk init${C_OFF}   (picks a mode, imports the CA from your YubiKey, sets up scopes)"
+  if confirm "Write a starter config from the example template instead?"; then
+    mkdir -p "$CONFIG_DIR"
+    cp "$REPO_DIR/config.example.yaml" "$CONFIG"
+    chmod 600 "$CONFIG"
+    ok "wrote $CONFIG — edit it (ca_pub, mode, scopes) before minting"
+  else
+    info "skipped — run 'mintk init' when ready."
+  fi
 }
 
 # ================================================================================
@@ -266,8 +271,8 @@ case "$ACTION" in
     if confirm "Build and install mintk to $PREFIX?"; then build_install; fi
     setup_config
     hdr "Next steps"
-    info "  1) review $CONFIG (ca_pub, mode, scopes)"
-    info "  2) mintk scopes list"
+    info "  1) mintk init             # bootstrap config: import the CA from your YubiKey"
+    info "  2) mintk scopes list      # (or 'mintk scopes add' / 'mintk scopes edit')"
     info "  3) mintk key <scope>      # mint (tap the YubiKey)"
     info "  4) mintk deploy <scope> user@host   # enroll a host"
     info "  Re-run './install.sh check' anytime to re-verify prerequisites."

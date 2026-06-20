@@ -17,6 +17,7 @@ func main() {
 		SilenceErrors: true,
 	}
 
+	root.AddCommand(initCmd())
 	root.AddCommand(keyCmd())
 	root.AddCommand(scopesCmd())
 	root.AddCommand(cleanCmd())

@@ -41,9 +41,20 @@ type Config struct {
 	// windows helpers (WSL): ykman.exe for `clean`
 	WinYkman string `yaml:"win_ykman"`
 
-	Scopes []Scope `yaml:"scopes"`
+	// scopes_file (optional): keep the scope list in a separate YAML — typically
+	// a private git repo — so it can be shared/synced across machines. When set,
+	// scopes are read from and written to this file instead of inline below.
+	ScopesFile string `yaml:"scopes_file,omitempty"`
 
-	path string `yaml:"-"` // where this config was loaded from
+	Scopes []Scope `yaml:"scopes,omitempty"`
+
+	path           string // where this config was loaded from
+	scopesExternal bool   // scopes came from ScopesFile
+}
+
+// scopesDoc is the on-disk shape of an external scopes file.
+type scopesDoc struct {
+	Scopes []Scope `yaml:"scopes"`
 }
 
 // configPath resolves the active config file: $MINTK_CONFIG wins, otherwise
@@ -99,7 +110,50 @@ func loadConfig() (*Config, error) {
 	}
 	c.path = path
 	c.applyDefaults()
+	if err := c.loadScopes(); err != nil {
+		return nil, err
+	}
 	return &c, nil
+}
+
+// loadScopes pulls scopes from ScopesFile when set (a missing file is treated as
+// "no scopes yet", not an error — the user may be about to add some).
+func (c *Config) loadScopes() error {
+	if c.ScopesFile == "" {
+		return nil
+	}
+	c.scopesExternal = true
+	p := expandPath(c.ScopesFile)
+	data, err := os.ReadFile(p)
+	if err != nil {
+		if os.IsNotExist(err) {
+			c.Scopes = nil
+			return nil
+		}
+		return err
+	}
+	var sf scopesDoc
+	if err := yaml.Unmarshal(data, &sf); err != nil {
+		return fmt.Errorf("parse %s: %w", p, err)
+	}
+	c.Scopes = sf.Scopes
+	return nil
+}
+
+// scopesFilePath returns the expanded external scopes file path ("" if unset).
+func (c *Config) scopesFilePath() string {
+	if c.ScopesFile == "" {
+		return ""
+	}
+	return expandPath(c.ScopesFile)
+}
+
+// scopesDest is the file scope edits are written to (external file or the config).
+func (c *Config) scopesDest() string {
+	if c.ScopesFile != "" {
+		return c.scopesFilePath()
+	}
+	return c.path
 }
 
 // applyDefaults fills in the values that have a sensible default so the rest of
@@ -141,9 +195,31 @@ func (c *Config) save() error {
 	if err := os.MkdirAll(filepath.Dir(c.path), 0o755); err != nil {
 		return err
 	}
-	data, err := yaml.Marshal(c)
+	// Don't duplicate scopes inline when they live in an external file.
+	out := *c
+	if c.ScopesFile != "" {
+		out.Scopes = nil
+	}
+	data, err := yaml.Marshal(&out)
 	if err != nil {
 		return err
 	}
 	return os.WriteFile(c.path, data, 0o600)
+}
+
+// saveScopes persists the scope list to the external scopes file when one is
+// configured, otherwise back into the main config.
+func (c *Config) saveScopes() error {
+	if c.ScopesFile == "" {
+		return c.save()
+	}
+	p := c.scopesFilePath()
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		return err
+	}
+	data, err := yaml.Marshal(scopesDoc{Scopes: c.Scopes})
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(p, data, 0o644)
 }

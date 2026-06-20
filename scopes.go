@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -19,6 +21,76 @@ func scopesCmd() *cobra.Command {
 	cmd.AddCommand(scopesAddCmd())
 	cmd.AddCommand(scopesDeleteCmd())
 	cmd.AddCommand(scopesEditCmd())
+	cmd.AddCommand(scopesPullCmd())
+	cmd.AddCommand(scopesPushCmd())
+	return cmd
+}
+
+// scopesGitDir returns the git repo directory backing the external scopes file,
+// or an error if scopes aren't kept in an external file.
+func scopesGitDir(cfg *Config) (string, error) {
+	if cfg.ScopesFile == "" {
+		return "", fmt.Errorf("scopes are inline; set scopes_file (a git repo) to use pull/push")
+	}
+	dir := filepath.Dir(cfg.scopesFilePath())
+	if !isGitRepo(dir) {
+		return "", fmt.Errorf("%s is not a git repository — clone/init your scopes repo there first", dir)
+	}
+	return dir, nil
+}
+
+func scopesPullCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "pull",
+		Short: "git pull the scopes repo (sync the shared scope list down)",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
+			dir, err := scopesGitDir(cfg)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("%s: git pull in %s\n", prog, dir)
+			return run("git", "-C", dir, "pull", "--ff-only")
+		},
+	}
+}
+
+func scopesPushCmd() *cobra.Command {
+	var msg string
+	cmd := &cobra.Command{
+		Use:   "push",
+		Short: "Commit + git push the scopes file (share local changes)",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
+			dir, err := scopesGitDir(cfg)
+			if err != nil {
+				return err
+			}
+			file := cfg.scopesFilePath()
+			if err := run("git", "-C", dir, "add", file); err != nil {
+				return err
+			}
+			// Commit only if something is actually staged.
+			if exec.Command("git", "-C", dir, "diff", "--cached", "--quiet").Run() == nil {
+				fmt.Printf("%s: nothing to push (scopes file unchanged)\n", prog)
+				return nil
+			}
+			if err := run("git", "-C", dir, "commit", "-m", msg); err != nil {
+				return err
+			}
+			fmt.Printf("%s: git push in %s\n", prog, dir)
+			return run("git", "-C", dir, "push")
+		},
+	}
+	cmd.Flags().StringVarP(&msg, "message", "m", "mintk: update scopes", "commit message")
 	return cmd
 }
 
@@ -75,7 +147,7 @@ func scopesAddCmd() *cobra.Command {
 			}
 			cfg.Scopes = append(cfg.Scopes, Scope{Name: name, Principal: args[1], TTL: ttl})
 			sortScopes(cfg)
-			if err := cfg.save(); err != nil {
+			if err := cfg.saveScopes(); err != nil {
 				return err
 			}
 			fmt.Printf("%s: added scope %s → principal=%s ttl=%s\n", prog, name, args[1], ttl)
@@ -97,7 +169,7 @@ func scopesDeleteCmd() *cobra.Command {
 			if !removeScope(cfg, args[0]) {
 				return fmt.Errorf("unknown scope %q", args[0])
 			}
-			if err := cfg.save(); err != nil {
+			if err := cfg.saveScopes(); err != nil {
 				return err
 			}
 			fmt.Printf("%s: deleted scope %s\n", prog, args[0])
@@ -145,10 +217,10 @@ func runScopesEdit(cfg *Config) error {
 		switch {
 		case idx == doneIdx:
 			if changed {
-				if err := cfg.save(); err != nil {
+				if err := cfg.saveScopes(); err != nil {
 					return err
 				}
-				fmt.Printf("%s: saved %s\n", prog, cfg.path)
+				fmt.Printf("%s: saved %s\n", prog, cfg.scopesDest())
 			}
 			return nil
 		case idx == addIdx:
@@ -162,10 +234,10 @@ func runScopesEdit(cfg *Config) error {
 		}
 	}
 	if changed {
-		if err := cfg.save(); err != nil {
+		if err := cfg.saveScopes(); err != nil {
 			return err
 		}
-		fmt.Printf("%s: saved %s\n", prog, cfg.path)
+		fmt.Printf("%s: saved %s\n", prog, cfg.scopesDest())
 	}
 	return nil
 }

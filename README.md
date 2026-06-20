@@ -58,13 +58,26 @@ make check            # run the prerequisite doctor
 your `ca.pub` + config can issue certs — the authority travels on the YubiKey, the machine
 is never "trusted."
 
+## First-time setup on a machine
+
+```
+mintk init
+```
+
+Interactively writes `~/.config/mint-key/config.yaml`: picks a signing mode, **imports the
+CA public key from your inserted YubiKey** (via PKCS#11 — or the ssh-agent, or a
+file/paste), and optionally points at a shared scopes file (see below). It won't overwrite
+an existing config (use `--force` to recreate).
+
 ## Usage
 
 ```
+mintk init                           # bootstrap config (import CA from the YubiKey)
 mintk key <scope> [<ttl>]            # issue/refresh a cert for <scope> into the agent
 mintk scopes list                    # list configured scopes
 mintk scopes add <name> <principal> [<ttl>]
 mintk scopes edit                    # interactive editor
+mintk scopes pull | push             # sync the shared scopes file via git
 mintk clean                          # (WSL+agent) recover after swapping YubiKeys
 mintk deploy <scope> user@host       # enroll a host to trust the CA + accept the scope
 ```
@@ -72,6 +85,19 @@ mintk deploy <scope> user@host       # enroll a host to trust the CA + accept th
 Scopes, principals, default lifetimes, the signing mode, CA location and the PKCS#11 path
 are all set in your config (`~/.config/mint-key/config.yaml`, or `$MINTK_CONFIG`); see
 [`config.example.yaml`](config.example.yaml). Nothing host-specific is baked into the code.
+
+### Sharing scopes across machines
+
+The scope list (alias → principal → ttl) is the one thing worth keeping in sync. Point
+`scopes_file` at a YAML in a **private git repo**:
+
+```yaml
+scopes_file: ~/work/mint-scopes/scopes.yaml
+```
+
+Then `mintk scopes add/edit/delete` write that file, and `mintk scopes pull` / `push` sync
+it via git. Which principal you actually use for which host stays local (your `~/.ssh/config`
+and your memory) — only the principal/alias catalogue travels.
 
 ## Host side
 

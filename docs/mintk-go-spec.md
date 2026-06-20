@@ -64,6 +64,13 @@ Pin exactly; mirror wg-hop's stack so it builds with the same toolchain (Go 1.25
 
 ## Commands (cobra; mirror wg-hop's structure & `edit` UX)
 
+### `mintk init`
+Interactive bootstrap of `~/.config/mint-key/config.yaml` for a new machine: pick a
+signing mode, **import the CA public key** (autodetect — inserted YubiKey via
+`ssh-keygen -D <pkcs11>`, then the ssh-agent via `ssh-add -L`, then paste/file), write it
+to `~/.config/mint-key/ca.pub`, and optionally set `scopes_file` (cloning the scopes git
+repo if given a URL). Refuses to clobber an existing config without `--force`.
+
 ### `mintk key <scope> [<ttl>]`
 Mint a cert for `<scope>` (default ttl from the scope). Port the bash signing modes:
 
@@ -81,13 +88,21 @@ Mint a cert for `<scope>` (default ttl from the scope). Port the bash signing mo
 Prefer driving `ssh-keygen` as a subprocess (same flags as bash) over reimplementing
 cert signing in Go — the agent/PKCS#11 paths are battle-tested via `ssh-keygen`.
 
-### `mintk scopes list | add | delete | edit`
+### `mintk scopes list | add | delete | edit | pull | push`
 CRUD over `scopes` in the YAML.
 - `list` — table of name / principal / ttl.
 - `add <name> <principal> [<ttl>]` and `delete <name>` — non-interactive edits.
 - `edit` — **interactive huh-based editor like wg-hop's `editCmd`/`runEditConfig`**:
   pick a scope to edit, or add/delete, accumulate changes, write the YAML on exit.
   (wg-hop uses charmbracelet/huh forms — mirror that look/flow.)
+- `pull` / `push` — when `scopes_file` is set (see below), `git pull --ff-only` /
+  `git add+commit+push` the scopes repo, for sharing the scope list across machines.
+
+**Shared scopes (`scopes_file`):** the scope list (alias → principal → ttl) can live in a
+separate YAML, typically a private git repo, so it travels across machines. When set, the
+`scopes` block in `config.yaml` is ignored; scope edits read/write `scopes_file` instead.
+The host↔principal/deploy mapping is intentionally *not* synced (it stays in `~/.ssh/config`
+and the operator's head) — only the principal/alias catalogue is shared.
 
 ### `mintk clean`
 Windows-cert-store hygiene for the WSL+Windows-agent path. Multiple YubiKeys carrying
@@ -152,13 +167,14 @@ migration path.
 
 The Go binary is implemented at repo root (`go build -o mintk .`, module `mintk`,
 Go 1.25 toolchain, cobra/huh/yaml pinned to wg-hop's versions). Layout: `main.go`
-(cobra root), `config.go` (YAML + `~`-expansion + `$MINTK_CONFIG`), `key.go` (all four
-signing modes + agent fingerprint check + agent-refused hint), `scopes.go`
-(list/add/delete + huh `edit` loop), `clean.go`, `deploy.go` (streams an idempotent
-trust script over SSH, sudo via `ssh -t`, alias resolution via `ssh -G`),
-`sshconfig.go` (add/edit `Host` blocks; unit-tested in `sshconfig_test.go`),
-`platform.go` (WSL/PKCS#11/path helpers), `prompt.go` (huh helpers).
-`config.example.yaml` ships placeholders.
+(cobra root), `config.go` (YAML + `~`-expansion + `$MINTK_CONFIG` + external `scopes_file`
+load/save), `init.go` (`mintk init` bootstrap + CA import), `key.go` (all four signing
+modes + agent fingerprint check + agent-refused hint), `scopes.go` (list/add/delete + huh
+`edit` loop + git pull/push), `clean.go`, `deploy.go` (streams an idempotent trust script
+over SSH, sudo via `ssh -t`, alias resolution via `ssh -G`), `sshconfig.go` (add/edit
+`Host` blocks; unit-tested in `sshconfig_test.go`), `platform.go` (WSL/PKCS#11/path
+helpers), `prompt.go` (huh helpers). `config.example.yaml` ships placeholders;
+`install.sh` + `Makefile` build/install and check prerequisites.
 
 - **Validated:** the agent (`-U`) path end-to-end on the WSL+Windows setup (mint via the
   YubiKey agent → `ssh` into a host) — `mintk` is in daily use. Plus software-mode

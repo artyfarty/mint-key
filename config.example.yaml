@@ -44,6 +44,12 @@ win_ykman: "/mnt/c/Program Files/Yubico/YubiKey Manager CLI/ykman.exe"
 # A scope maps a name to a principal (what target hosts must list in their
 # AuthorizedPrincipalsFile) and a default ttl. Use YOUR real principals in your
 # private config; these are placeholders.
+#
+# Optional: keep the scope list in a separate file — typically a private git repo —
+# so it travels across machines. When set, `scopes` below is ignored and
+# `mintk scopes add/edit/delete` + `mintk scopes pull/push` operate on this file.
+# scopes_file: ~/work/mint-scopes/scopes.yaml
+
 scopes:
   - name: example-host
     principal: host-example
