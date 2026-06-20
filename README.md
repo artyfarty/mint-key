@@ -41,9 +41,18 @@ cd ~/work/mint-key
 ./install.sh                 # checks prereqs, builds mintk → /usr/local/bin, seeds config
 ```
 
-Or do the pieces individually: `./install.sh check` (prerequisite "doctor"),
-`./install.sh deps` (OS packages), `./install.sh build` (build + install the binary),
-`./install.sh config` (write a starter config from the example).
+`./install.sh` is the guided path; the pieces are also available individually:
+`./install.sh check` (prerequisite "doctor"), `./install.sh deps` (OS packages),
+`./install.sh build` (build + install the binary), `./install.sh config` (write a starter
+config from the example).
+
+Just want the binary? Use the Makefile:
+
+```
+make                  # build ./mintk
+sudo make install     # install to /usr/local/bin (PREFIX=~/.local for a user install)
+make check            # run the prerequisite doctor
+```
 
 `mintk` is portable: any machine with `ssh-keygen` + access to the CA (agent or token) and
 your `ca.pub` + config can issue certs — the authority travels on the YubiKey, the machine
