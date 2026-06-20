@@ -1,0 +1,48 @@
+# mint.conf — EXAMPLE. Copy to ~/.config/mint/config (or point $MINT_CONFIG at it)
+# and fill in YOUR values. Keep your real config OUT of this (public) repo.
+#
+# This file is sourced by `mint` as shell, so it's plain shell assignments + two
+# functions. Everything here is a generic placeholder.
+
+# --- CA backend ---------------------------------------------------------------
+# Token mode (recommended): the CA *private* key is on a YubiKey; point CA_PUB at
+# the CA *public* key and let mint find the PKCS#11 module (or set YKCS11).
+CA_PUB="$HOME/.config/mint/ca.pub"
+# YKCS11="/usr/lib/x86_64-linux-gnu/libykcs11.so"   # uncomment to override autodetect
+
+# Software mode (TESTING ONLY): use a CA private key file instead of a token.
+# If CA_KEY is set it takes precedence over CA_PUB/YKCS11. Never use a software CA
+# for anything you care about — the whole point is the key never leaves hardware.
+# CA_KEY="$HOME/.config/mint/ca"
+
+# Where throwaway per-scope user keys + certs are written (mode 700).
+SESSIONS_DIR="$HOME/.ssh/sessions"
+
+# Optional: lock issued certs to a source IP/CIDR (cert is unusable from elsewhere).
+# Mind NAT / VPN egress addresses. Leave empty to disable.
+# SOURCE_ADDRESS="203.0.113.10"
+
+# --- scopes -------------------------------------------------------------------
+# scope_def <scope> must echo "<principal> <default-hours>" for a known scope and
+# return non-zero for an unknown one. The <principal> is what target hosts must list
+# in their AuthorizedPrincipalsFile (see trust-ca). Use YOUR real principals here in
+# your private config; these are placeholders.
+scope_def() {
+  case "$1" in
+    example-host) echo "host-example 8" ;;
+    deploy)       echo "deploy-example 24" ;;
+    general)      echo "general 24" ;;
+    danger)       echo "danger-example 1" ;;
+    *) return 1 ;;
+  esac
+}
+
+# Optional: pretty list for `mint --list`.
+scope_list() {
+  cat <<'EOF'
+  example-host   principal=host-example    default 8h
+  deploy         principal=deploy-example  default 24h
+  general        principal=general         default 24h
+  danger         principal=danger-example  default 1h
+EOF
+}

@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+#
+# trust-ca — configure THIS host to trust an SSH user CA and accept a set of
+# principals for a login user. Run as root on the target host. Idempotent.
+#
+# Usage:
+#   trust-ca <ca.pub> <login-user> <principal> [<principal> ...]
+#
+# Effect:
+#   - appends <ca.pub> to /etc/ssh/trusted-user-ca-keys.pub (dedup'd)
+#   - ensures sshd_config has:
+#       TrustedUserCAKeys /etc/ssh/trusted-user-ca-keys.pub
+#       AuthorizedPrincipalsFile /etc/ssh/auth_principals/%u
+#   - writes the principals into /etc/ssh/auth_principals/<login-user>
+#   - validates (sshd -t) and reloads sshd
+#
+# A login as <login-user> presenting a CA-signed cert is then granted iff the cert's
+# principal list intersects that user's auth_principals file. No per-key authorized_keys.
+
+set -euo pipefail
+die() { printf 'trust-ca: %s\n' "$*" >&2; exit 1; }
+[ "$(id -u)" = 0 ] || die "must run as root"
+[ $# -ge 3 ] || die "usage: trust-ca <ca.pub> <login-user> <principal> [<principal> ...]"
+
+capub=$1; user=$2; shift 2
+[ -f "$capub" ] || die "ca.pub '$capub' not found"
+id "$user" >/dev/null 2>&1 || die "login user '$user' does not exist"
+
+ca_store=/etc/ssh/trusted-user-ca-keys.pub
+sshd_config=/etc/ssh/sshd_config
+princ_dir=/etc/ssh/auth_principals
+ca_line=$(cat "$capub")
+
+# 1) add the CA pubkey (dedup by key body)
+touch "$ca_store"; chmod 644 "$ca_store"
+if ! grep -qF "$(awk '{print $2}' "$capub")" "$ca_store" 2>/dev/null; then
+  printf '%s\n' "$ca_line" >> "$ca_store"
+  echo "trust-ca: added CA to $ca_store"
+else
+  echo "trust-ca: CA already trusted in $ca_store"
+fi
+
+# 2) ensure sshd_config directives
+ensure_directive() {
+  local key=$1 val=$2
+  if grep -Eq "^[[:space:]]*${key}[[:space:]]" "$sshd_config"; then
+    sed -i -E "s|^[[:space:]]*${key}[[:space:]].*|${key} ${val}|" "$sshd_config"
+  else
+    printf '%s %s\n' "$key" "$val" >> "$sshd_config"
+  fi
+}
+ensure_directive TrustedUserCAKeys "$ca_store"
+ensure_directive AuthorizedPrincipalsFile "$princ_dir/%u"
+
+# 3) principals for the login user
+install -d -m 755 "$princ_dir"
+printf '%s\n' "$@" > "$princ_dir/$user"
+chmod 644 "$princ_dir/$user"
+echo "trust-ca: $user accepts principals: $*"
+
+# 4) validate + reload
+sshd -t || die "sshd config validation failed — NOT reloading; fix $sshd_config"
+if   command -v systemctl >/dev/null 2>&1; then systemctl reload ssh 2>/dev/null || systemctl reload sshd
+elif command -v service   >/dev/null 2>&1; then service ssh reload 2>/dev/null || service sshd reload
+else kill -HUP "$(cat /var/run/sshd.pid 2>/dev/null || pgrep -o sshd)"; fi
+echo "trust-ca: sshd reloaded — done"
