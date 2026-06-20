@@ -266,22 +266,45 @@ func caComment(line string) string {
 	return ""
 }
 
-// abbrevPub renders a pubkey line compactly: "<type> …<tail> <comment>".
+// abbrevPub renders a pubkey line for the picker: "<type>  <fingerprint>  <comment>".
+// The SHA256 fingerprint is the reliable way to tell keys apart — it matches what
+// `ssh-keygen -lf ca.pub` / `install.sh check` print for the CA — since PKCS#11
+// keys often carry no comment/CN.
 func abbrevPub(line string) string {
 	f := strings.Fields(line)
 	if len(f) < 2 {
 		return line
 	}
-	blob := f[1]
-	tail := blob
-	if len(blob) > 16 {
-		tail = "…" + blob[len(blob)-16:]
+	parts := []string{f[0]}
+	if fp := pubFingerprint(line); fp != "" {
+		parts = append(parts, fp)
 	}
-	out := f[0] + " " + tail
 	if c := caComment(line); c != "" {
-		out += "  " + c
+		parts = append(parts, c)
 	}
-	return out
+	return strings.Join(parts, "  ")
+}
+
+// pubFingerprint returns the SHA256 fingerprint of a single public-key line, or "".
+func pubFingerprint(line string) string {
+	f, err := os.CreateTemp("", "mintk-pub-*.pub")
+	if err != nil {
+		return ""
+	}
+	defer os.Remove(f.Name())
+	if _, err := f.WriteString(strings.TrimSpace(line) + "\n"); err != nil {
+		f.Close()
+		return ""
+	}
+	f.Close()
+	out, err := runOut("ssh-keygen", "-lf", f.Name())
+	if err != nil {
+		return ""
+	}
+	if flds := strings.Fields(out); len(flds) >= 2 {
+		return flds[1]
+	}
+	return ""
 }
 
 // isGitRepo reports whether dir is inside a git work tree.
