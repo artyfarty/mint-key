@@ -322,3 +322,24 @@ func runOut(name string, args ...string) (string, error) {
 func runErr(name string, args ...string) error {
 	return exec.Command(name, args...).Run()
 }
+
+// runOutErr runs a command and returns trimmed stdout, trimmed stderr, and the
+// error — used when the stderr matters for diagnostics.
+func runOutErr(name string, args ...string) (string, string, error) {
+	cmd := exec.Command(name, args...)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	err := cmd.Run()
+	return strings.TrimSpace(out.String()), strings.TrimSpace(errb.String()), err
+}
+
+// firstLine returns the first non-empty line of s (for compact error reporting).
+func firstLine(s string) string {
+	for _, l := range strings.Split(s, "\n") {
+		if strings.TrimSpace(l) != "" {
+			return strings.TrimSpace(l)
+		}
+	}
+	return ""
+}

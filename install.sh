@@ -152,7 +152,8 @@ check_token_mode() {
     /usr/lib/x86_64-linux-gnu/libykcs11.so /usr/lib/libykcs11.so \
     /usr/local/lib/libykcs11.so /usr/local/lib/libykcs11.dylib /opt/homebrew/lib/libykcs11.dylib \
     /usr/lib/x86_64-linux-gnu/opensc-pkcs11.so /usr/lib/opensc-pkcs11.so \
-    /usr/local/lib/opensc-pkcs11.so /opt/homebrew/lib/opensc-pkcs11.so; do
+    /usr/local/lib/opensc-pkcs11.so /opt/homebrew/lib/opensc-pkcs11.so \
+    /Library/OpenSC/lib/opensc-pkcs11.so; do
     [ -e "$p" ] && { found="$p"; break; }
   done
   if [ -n "$found" ]; then ok "PKCS#11 module: $found"; else

@@ -169,17 +169,46 @@ func importCAPub(cfg *Config) (string, error) {
 		cands = append(cands, cand{source, line})
 	}
 
+	// --- PKCS#11 (inserted YubiKey) ---
+	fmt.Printf("%s: discovering CA public keys...\n", prog)
 	if mod := pickYKCS11(cfg); mod != "" {
-		if out, err := runOut("ssh-keygen", "-D", mod); err == nil {
+		fmt.Printf("  • PKCS#11 module: %s\n", mod)
+		out, errOut, err := runOutErr("ssh-keygen", "-D", mod)
+		switch {
+		case err != nil:
+			fmt.Printf("    ! could not read the token: %s\n", firstLine(errOut+" "+err.Error()))
+			fmt.Printf("      → is the YubiKey inserted? is its PIV applet set up (slot 9c)?\n")
+			fmt.Printf("        (reading the public key needs no PIN/touch; on Linux pcscd must run)\n")
+		case strings.TrimSpace(out) == "":
+			fmt.Printf("    ! module loaded but the token exposed no keys (empty PIV slots?)\n")
+		default:
+			before := len(cands)
 			for _, l := range strings.Split(out, "\n") {
 				add("yubikey", l)
 			}
+			fmt.Printf("    ✓ %d key(s) on the token\n", len(cands)-before)
 		}
+	} else {
+		fmt.Printf("  • no PKCS#11 module found (looked for libykcs11 / opensc-pkcs11 in standard paths)\n")
+		fmt.Printf("    → install one to read the CA from the inserted YubiKey:\n")
+		fmt.Printf("        macOS:  brew install yubico-piv-tool      (or the OpenSC.pkg)\n")
+		fmt.Printf("        Linux:  apt install yubico-piv-tool opensc\n")
+		fmt.Printf("      or set 'ykcs11:' in the config. See docs/prerequisites.md.\n")
 	}
-	if out, err := runOut("ssh-add", "-L"); err == nil {
+
+	// --- ssh-agent ---
+	if out, errOut, err := runOutErr("ssh-add", "-L"); err != nil || strings.TrimSpace(out) == "" {
+		reason := "no identities"
+		if errOut != "" {
+			reason = firstLine(errOut)
+		}
+		fmt.Printf("  • ssh-agent: %s\n", reason)
+	} else {
+		before := len(cands)
 		for _, l := range strings.Split(out, "\n") {
 			add("agent", l)
 		}
+		fmt.Printf("  • ssh-agent: %d key(s)\n", len(cands)-before)
 	}
 
 	var options []string

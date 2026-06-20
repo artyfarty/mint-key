@@ -18,17 +18,20 @@ func inWSL() bool {
 }
 
 // ykcs11Candidates are the usual PKCS#11 module locations across Linux/macOS,
-// libykcs11 preferred over opensc-pkcs11.
+// libykcs11 (Yubico) preferred over opensc-pkcs11 (OpenSC).
 var ykcs11Candidates = []string{
+	// Yubico libykcs11
 	"/usr/lib/x86_64-linux-gnu/libykcs11.so",
 	"/usr/lib/libykcs11.so",
 	"/usr/local/lib/libykcs11.so",
-	"/usr/local/lib/libykcs11.dylib",
-	"/opt/homebrew/lib/libykcs11.dylib",
+	"/usr/local/lib/libykcs11.dylib",    // macOS (Intel brew / pkg)
+	"/opt/homebrew/lib/libykcs11.dylib", // macOS (Apple-silicon brew)
+	// OpenSC
 	"/usr/lib/x86_64-linux-gnu/opensc-pkcs11.so",
 	"/usr/lib/opensc-pkcs11.so",
 	"/usr/local/lib/opensc-pkcs11.so",
 	"/opt/homebrew/lib/opensc-pkcs11.so",
+	"/Library/OpenSC/lib/opensc-pkcs11.so", // macOS OpenSC.pkg installer
 }
 
 // detectYKCS11 returns the first PKCS#11 module that exists, or "" if none.
