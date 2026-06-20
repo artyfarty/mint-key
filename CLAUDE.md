@@ -1,16 +1,17 @@
 # mint-key
 
-A small, portable CLI (`mint`) that issues **short-lived, scope-limited OpenSSH user
-certificates** by signing them with a CA private key held on a **YubiKey** (PIV slot,
-via PKCS#11) — a thin, auditable wrapper around `ssh-keygen -s`. Tap the YubiKey once to
-authorize a scope for a session; SSH then needs no further taps until the cert expires.
+A small, portable Go CLI (`mintk`) that issues **short-lived, scope-limited OpenSSH user
+certificates** by signing them with a CA private key held on a **YubiKey** (reached via
+the ssh-agent or PKCS#11) — a thin, auditable wrapper around `ssh-keygen -s`. Tap the
+YubiKey once to authorize a scope for a session; SSH then needs no further taps until the
+cert expires.
 
 > **Visibility:** Public
 
 ## What this is (and isn't)
 
-- It is the generic **tooling**: the `mint` client, a host-side `trust-ca` helper, an
-  example config, and docs explaining the model.
+- It is the generic **tooling**: the `mintk` binary (commands `key` / `scopes` / `clean`
+  / `deploy`), an `install.sh`, an example config, and docs explaining the model.
 - It is **not** anyone's deployment. Real CA keys, real hostnames/principals, and real
   configs live **outside this repo** (in the operator's private config / secret store).
   This repo ships only placeholders.
@@ -19,8 +20,8 @@ authorize a scope for a session; SSH then needs no further taps until the cert e
 
 - All configuration (CA key location, PKCS#11 library path, scope→principal mapping,
   source-address, etc.) **must** come from a config file, never hardcoded. Ship
-  `mint.conf.example` with generic placeholders; the real config lives at
-  `~/.config/mint/config` (or `$MINT_CONFIG`) outside the repo.
+  `config.example.yaml` with generic placeholders; the real config lives at
+  `~/.config/mint-key/config.yaml` (or `$MINTK_CONFIG`) outside the repo.
 - **Read `docs/` before planning** — start from `docs/index.md`.
 - **Update `docs/` before committing** — keep the index in sync; record quirks
   (PKCS#11 paths per OS, touch/PIN policy gotchas, agent behaviour) as they're found.

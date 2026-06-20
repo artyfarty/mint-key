@@ -7,8 +7,8 @@ you add, rename, or remove docs.
 | --- | --- |
 | [design.md](design.md) | How the tool works: the SSH-CA model, scopes/principals, the issuance flow, the tap-once-per-scope property, and the threat model. |
 | [yubikey-piv-setup.md](yubikey-piv-setup.md) | Putting the CA private key on a YubiKey PIV slot (generate offline → import → policies → distribute `ca.pub` → seal backup), and the software-CA test mode. |
-| [prerequisites.md](prerequisites.md) | What must be installed/configured for `mint` to work, per platform (token mode on Linux/macOS; the Windows+WSL agent path: minidriver, WinCryptSSHAgent, the agent bridge), host-side trust, gotchas. The installer's checklist. |
-| [mintk-go-spec.md](mintk-go-spec.md) | **Build brief:** rewrite the bash `mint` as a Go binary `mintk` — YAML config in `~/.config/mint-key/`, cobra + huh, commands `key`/`scopes (list/add/delete/edit)`/`clean`/`deploy`. Implement from here in a focused session. |
+| [prerequisites.md](prerequisites.md) | What must be installed/configured for `mintk` to work, per platform (token mode on Linux/macOS; the Windows+WSL agent path: minidriver, WinCryptSSHAgent, the agent bridge), host-side trust, gotchas. `install.sh`'s checklist. |
+| [mintk-go-spec.md](mintk-go-spec.md) | **Design/build brief** for the `mintk` binary — YAML config in `~/.config/mint-key/`, cobra + huh, commands `key`/`scopes (list/add/delete/edit)`/`clean`/`deploy`, plus the implementation status. |
 
 ## Conventions
 

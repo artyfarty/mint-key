@@ -1,6 +1,6 @@
-# Prerequisites — what `mint` needs to work
+# Prerequisites — what `mintk` needs to work
 
-What must be installed/configured before `mint key <scope>` can sign a cert with a
+What must be installed/configured before `mintk key <scope>` can sign a cert with a
 YubiKey-held CA and you can SSH in with it. Generic; substitute your own paths/names.
 This is the reference for the installer to check + offer to install.
 
@@ -12,21 +12,21 @@ This is the reference for the installer to check + offer to install.
   cert is required even when you only use the key for signing: PKCS#11 modules and
   Windows CNG only expose a slot's key if a cert is present. Generate a self-signed one:
   `ykman piv certificates generate --subject "CN=<your-ca-cn>" --valid-days 36500 9c <pub.pem>`.
-- **`ca.pub`** (the CA public key, OpenSSH format) available to `mint` and distributed to
+- **`ca.pub`** (the CA public key, OpenSSH format) available to `mintk` and distributed to
   the hosts you want to reach (see "Host side").
 - Recommended: `ykman` (YubiKey Manager) for slot management.
 
 ## Linux / macOS — token mode (YubiKey attached to this machine)
 
 - **A PKCS#11 module:** Yubico `libykcs11` (`yubico-piv-tool`) **or** OpenSC
-  `opensc-pkcs11.so` (`opensc`). `mint` autodetects common paths; else set it in config.
+  `opensc-pkcs11.so` (`opensc`). `mintk` autodetects common paths; else set it in config.
 - **`pcscd`** running (PC/SC daemon) so the module can reach the card. On a headless box
   it may need `pcscd --disable-polkit` (polkit denies PC/SC over SSH sessions).
 - Sign path: `ssh-keygen -s ca.pub -D <module> …` (PIN + touch on the YubiKey).
 
 ## Windows + WSL — agent mode (the validated path)
 
-The YubiKey lives on Windows; `mint` runs in WSL. Native Win32 `ssh-keygen` has **no
+The YubiKey lives on Windows; `mintk` runs in WSL. Native Win32 `ssh-keygen` has **no
 PKCS#11**, and Git-Bash (Cygwin) `ssh-keygen` **crashes** loading a native PKCS#11 DLL,
 so signing goes through the **ssh-agent** (`ssh-keygen -U`) instead. Pieces:
 
@@ -43,7 +43,7 @@ so signing goes through the **ssh-agent** (`ssh-keygen -U`) instead. Pieces:
    at the Windows `openssh-ssh-agent` pipe, so WSL sees the YubiKey key. Verify:
    `ssh-add -l` in WSL lists the CA key (fingerprint matches `ca.pub`).
 4. **WSL OpenSSH** with `-U` support (Ubuntu's is fine).
-5. For `mint clean`: Windows `ykman.exe` + `certutil.exe` + `powershell.exe` reachable
+5. For `mintk clean`: Windows `ykman.exe` + `certutil.exe` + `powershell.exe` reachable
    from WSL via interop.
 
 Set `~/.ssh/config` to `AddKeysToAgent no` and pin homelab hosts with
@@ -55,7 +55,7 @@ failures`).
 
 - **Multi-YubiKey, same CA key:** each card enrolls a cert with an identical public key
   into `CurrentUser\My`; the agent may then sign with a container whose card isn't
-  plugged → **"agent refused operation"**. Fix: `mint clean` (purge those certs) then
+  plugged → **"agent refused operation"**. Fix: `mintk clean` (purge those certs) then
   re-plug the card you want — propagation re-enrolls only its (linked) cert.
 - **usbipd** (USB passthrough to WSL) works but **detaches the key from Windows** — avoid;
   the agent path keeps the YubiKey usable by Windows.
@@ -69,8 +69,8 @@ TrustedUserCAKeys /etc/ssh/trusted-user-ca-keys.pub      # contains ca.pub
 AuthorizedPrincipalsFile /etc/ssh/auth_principals/%u     # lists principals per login user
 ```
 plus the scope's `principal` in `/etc/ssh/auth_principals/<login-user>`, then reload sshd.
-The repo's `trust-ca` helper (and, in the Go rewrite, `mintk deploy <scope> user@host`)
-does this over SSH.
+`mintk deploy <scope> user@host` does this over SSH (streams the CA pubkey + a small
+enrollment script; sudo on the host).
 
 **Routers excluded:** RouterOS doesn't accept OpenSSH user certs — those stay on their
 own key/password model.

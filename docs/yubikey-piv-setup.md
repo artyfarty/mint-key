@@ -48,35 +48,40 @@ Keep `ca.pub` around (it's public).
 
 ## 4. Distribute `ca.pub` to hosts
 
-On each target host (see `trust-ca` in the repo root):
+Enroll each target host with `mintk deploy` (uses your existing SSH access + sudo on the
+host to trust the CA and accept the scope's principal):
 
 ```
-sudo ./trust-ca ca.pub <login-user> <principal> [<principal> ...]
+mintk deploy <scope> user@host
 ```
 
-## 5. Point `mint` at the token
+## 5. Point `mintk` at the token
 
-In your config (`~/.config/mint/config`):
+In your config (`~/.config/mint-key/config.yaml`):
 
-```
-CA_PUB="$HOME/.config/mint/ca.pub"
-# YKCS11="/path/to/libykcs11.{so,dylib,dll}"   # only if autodetect misses it
+```yaml
+ca_pub: ~/.config/mint-key/ca.pub
+mode: token
+# ykcs11: /path/to/libykcs11.{so,dylib,dll}   # only if autodetect misses it
 ```
 
 `libykcs11` locations differ by OS — Linux: `/usr/lib/.../libykcs11.so`; macOS:
 `…/libykcs11.dylib` (Homebrew `yubico-piv-tool`); Windows: under the Yubico PIV Tool
-install. `mint` autodetects common paths; override with `YKCS11` if needed.
+install. `mintk` autodetects common paths; override with `ykcs11` if needed.
 
 ## Software test mode (before hardware)
 
-To validate the whole pipeline without a token, point `mint` at a software CA key and
+To validate the whole pipeline without a token, point `mintk` at a software CA key and
 swap to the token afterwards:
 
+```yaml
+# ssh-keygen -t ed25519 -f ca-test -N ''      # throwaway test CA
+mode: software
+ca_key: ~/.../ca-test                          # CA private key file (testing only)
 ```
-ssh-keygen -t ed25519 -f ca-test -N ''        # throwaway test CA
-# in config:  CA_KEY="$HOME/.../ca-test"       # takes precedence over CA_PUB/YKCS11
-sudo ./trust-ca ca-test.pub <login-user> <principal>
-mint <scope>                                   # signs in software, no tap
+```
+mintk deploy <scope> user@host                 # enroll the host with the test CA
+mintk key <scope>                              # signs in software, no tap
 ```
 
 Delete the test CA and its trust once you've cut over to the YubiKey.

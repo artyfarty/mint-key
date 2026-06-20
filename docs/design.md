@@ -42,26 +42,26 @@ YubiKey — would require a tap on every connection.)
 A minted cert + its key are loaded into the `ssh-agent` with a lifetime matching the
 cert (`ssh-add -t`), so they auto-expire from the agent too.
 
-## Issuance flow (`mint <scope> [hours]`)
+## Issuance flow (`mintk key <scope> [<ttl>]`)
 
-1. Resolve `<scope>` → `(principal, default-hours)` from config.
-2. Ensure a throwaway `ed25519` key for the scope exists under `SESSIONS_DIR`.
-3. `ssh-keygen -s <CA> [-D <pkcs11>] -I <id> -n <principal> -V +<h>h [-O source-address=…]
+1. Resolve `<scope>` → `(principal, default-ttl)` from config.
+2. Ensure a throwaway `ed25519` key for the scope exists under `sessions_dir`.
+3. `ssh-keygen -s <CA> [-D <pkcs11>] -I <id> -n <principal> -V +<ttl> [-O source-address=…]
    <scope>.pub` → **this is the tap** (hardware mode).
-4. `ssh-add -t <h>h` the key+cert into the agent.
+4. `ssh-add -t <ttl>` the key+cert into the agent.
 
-CA backends (signing modes, auto-selected from config):
-- **Token (hardware):** `-s ca.pub -D <pkcs11>` — CA private key on the YubiKey, reached
-  by a local PKCS#11 module (libykcs11 / opensc-pkcs11). Best when the YubiKey is on the
-  same machine that runs `mint` (Linux/macOS, or WSL with the key passed through).
-- **Agent (`CA_AGENT=1`):** `-s ca.pub -U` — the CA key lives in the `ssh-agent`;
+CA backends (signing modes, selected by `mode:` in the config):
+- **Token (`mode: token`):** `-s ca.pub -D <pkcs11>` — CA private key on the YubiKey,
+  reached by a local PKCS#11 module (libykcs11 / opensc-pkcs11). Best when the YubiKey is
+  on the same machine that runs `mintk` (Linux/macOS, or WSL with the key passed through).
+- **Agent (`mode: agent`):** `-s ca.pub -U` — the CA key lives in the `ssh-agent`;
   ssh-keygen signs *through the agent*. This is the clean answer when the YubiKey is on a
-  **Windows** host and `mint` runs in **WSL**: expose the YubiKey to a Windows SSH agent
+  **Windows** host and `mintk` runs in **WSL**: expose the YubiKey to a Windows SSH agent
   (e.g. WinCryptSSHAgent, reading PIV via Windows' native smartcard stack), bridge that
   agent into WSL, and sign with `-U` — no usbipd, no Cygwin, no local PKCS#11. Windows
   keeps the YubiKey; only the signature crosses the bridge (the YubiKey taps).
-- **Software (testing only):** `-s ca` — a CA private key file. Validate the end-to-end
-  pipeline before importing to hardware; never for anything real.
+- **Software (`mode: software`, testing only):** `-s ca` — a CA private key file.
+  Validate the end-to-end pipeline before importing to hardware; never for anything real.
 
 ### Platform note (Windows + WSL)
 
@@ -69,9 +69,8 @@ Why the agent mode exists: native Win32 OpenSSH `ssh-keygen` has **no PKCS#11** 
 and the Git-Bash (Cygwin) `ssh-keygen`, while it *has* PKCS#11, **crashes loading a
 native Windows PKCS#11 DLL**. WSL's own `ssh-keygen` has PKCS#11 but can't see a
 Windows-attached YubiKey without usbipd (which detaches it from Windows). The
-agent-`-U` path sidesteps all of that. (A `wsl-delegate` mode that shells out to the
-Windows ssh-keygen also exists in the script but is unreliable for exactly the Cygwin
-reason above.)
+agent-`-U` path sidesteps all of that. (`mintk` also has a `wsl-delegate` mode that shells
+out to the Windows ssh-keygen, but it's unreliable for exactly the Cygwin reason above.)
 
 ## Threat model & residual risk
 

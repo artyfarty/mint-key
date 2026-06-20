@@ -2,8 +2,6 @@
 .claude/settings.local.json
 
 # Real config (lives outside the repo); only the .example is committed
-mint.conf
-config
 config.yaml
 
 # Compiled mintk binary (build with `go build -o mintk .`)

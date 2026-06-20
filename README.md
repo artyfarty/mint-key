@@ -2,14 +2,15 @@
 
 Issue **short-lived, scope-limited OpenSSH user certificates** from a CA whose private
 key lives on a **YubiKey**. One tap authorizes a scope for a session; SSH then needs no
-further taps until the cert expires. A thin, auditable wrapper around `ssh-keygen -s`.
+further taps until the cert expires. `mintk` is a thin, auditable wrapper around
+`ssh-keygen -s`.
 
 ```
-$ mint example-host
-mint: signing example-host  principal=host-example  valid=+8h  [YubiKey — tap to sign]
+$ mintk key example-host
+mintk: signing example-host  principal=host-example  +8h  [agent CA — tap to sign]
        (tap the blinking YubiKey)
-mint: minted.
-        Type: ed25519-cert ... user certificate
+mintk: minted.
+        Type: ecdsa-cert ... user certificate
         Principals: host-example
         Valid: from ... to ...
 $ ssh some-host            # works for 8h, no further taps
@@ -30,37 +31,52 @@ $ ssh some-host            # works for 8h, no further taps
 
 ## Install
 
-Requires OpenSSH (`ssh-keygen`, `ssh-add`) and — for hardware mode — the Yubico
-PKCS#11 module (`libykcs11`, from `yubico-piv-tool` / `ykman`).
+Requires OpenSSH (`ssh-keygen`, `ssh-add`) and a Go toolchain to build. For hardware
+mode you also need the YubiKey reachable via the ssh-agent (agent mode) or the Yubico
+PKCS#11 module `libykcs11` (token mode). See [docs/prerequisites.md](docs/prerequisites.md).
 
 ```
-git clone <this-repo> ~/mint-key
-ln -s ~/mint-key/mint ~/.local/bin/mint          # or add the repo to PATH
-cp ~/mint-key/mint.conf.example ~/.config/mint/config   # then edit it
+git clone <this-repo> ~/work/mint-key
+cd ~/work/mint-key
+./install.sh                 # checks prereqs, builds mintk → /usr/local/bin, seeds config
 ```
 
-`mint` is portable: any machine with `ssh-keygen` + `libykcs11` + your `ca.pub` and
-config can issue certs — the authority travels on the YubiKey, the machine is never
-"trusted." See [docs/](docs/index.md).
+Or do the pieces individually: `./install.sh check` (prerequisite "doctor"),
+`./install.sh deps` (OS packages), `./install.sh build` (build + install the binary),
+`./install.sh config` (write a starter config from the example).
+
+`mintk` is portable: any machine with `ssh-keygen` + access to the CA (agent or token) and
+your `ca.pub` + config can issue certs — the authority travels on the YubiKey, the machine
+is never "trusted."
 
 ## Usage
 
 ```
-mint <scope> [hours]      # issue/refresh a cert for <scope> into the agent
-mint --list               # list configured scopes
+mintk key <scope> [<ttl>]            # issue/refresh a cert for <scope> into the agent
+mintk scopes list                    # list configured scopes
+mintk scopes add <name> <principal> [<ttl>]
+mintk scopes edit                    # interactive editor
+mintk clean                          # (WSL+agent) recover after swapping YubiKeys
+mintk deploy <scope> user@host       # enroll a host to trust the CA + accept the scope
 ```
 
-Scopes, principals, default lifetimes, CA location and the PKCS#11 path are all set in
-your config (see `mint.conf.example`). Nothing host-specific is baked into the code.
+Scopes, principals, default lifetimes, the signing mode, CA location and the PKCS#11 path
+are all set in your config (`~/.config/mint-key/config.yaml`, or `$MINTK_CONFIG`); see
+[`config.example.yaml`](config.example.yaml). Nothing host-specific is baked into the code.
 
 ## Host side
 
-On each target host, once, trust the CA and declare which principals a login user
-accepts:
+To let a host accept your certs, enroll it once — this is "ssh-copy-id for the CA". Using
+your existing SSH access (sudo on the host), it appends `ca.pub` to the host's trusted CA
+keys and adds the scope's principal to the login user's `AuthorizedPrincipalsFile`:
 
 ```
-sudo ./trust-ca /path/to/ca.pub <login-user> host-example general
+mintk deploy example-host user@host
 ```
+
+It also adds/updates `Host <host>` in your `~/.ssh/config` with `IdentityFile` (the minted
+cert) + `IdentitiesOnly yes`, so `ssh <host>` just works (skip with `--no-ssh-config`).
+The target may be a `~/.ssh/config` alias.
 
 ## Setting up the CA on a YubiKey
 
@@ -72,6 +88,6 @@ key. Hardware mode never lets the CA private key touch a working disk again.
 ## Security notes
 
 - A live cert sits in your agent for its lifetime — keep lifetimes tight on sensitive
-  scopes, mint only the scopes in play, and consider `SOURCE_ADDRESS` locking.
+  scopes, mint only the scopes in play, and consider `source_address` locking.
 - This repo is **generic tooling**. Your real CA, hostnames, and principals stay in
   your private config — never commit them here.

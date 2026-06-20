@@ -1,9 +1,9 @@
-# Spec — rewrite `mint` (bash) as a Go binary `mintk`
+# Spec — the `mintk` Go binary
 
-Implementation brief for a focused build. The current **bash `mint`** in the repo root is
-the working reference implementation — read it and [design.md](design.md) for exact
-behaviour; this doc specifies the Go rewrite. Keep the bash version until the Go one is
-validated end-to-end (mint a cert via the YubiKey agent → ssh into a host).
+Design/build brief for `mintk`. It began as a rewrite of an earlier bash `mint` script
+(now removed); see [design.md](design.md) for the model and behaviour. `mintk` has been
+validated end-to-end (mint a cert via the YubiKey agent → ssh into a host); the
+implementation status is at the end of this doc.
 
 ## Goal & name
 
@@ -133,12 +133,13 @@ WinCryptSSHAgent on the `openssh-ssh-agent` pipe → npiperelay bridge → WSL a
 otherwise) and the slot-9c cert must be in `CurrentUser\My` (re-plug after installing the
 minidriver). `mintk` targets this path; `clean` handles the multi-card collision.
 
-## Migration & compat
+## Install
 
-- One-time: read the old bash config if present and offer to write `config.yaml`.
-- Don't break the working bash `mint` — leave it in the repo until `mintk` is validated;
-  then update README to point at `mintk`, and the installer (the prereq/installer task)
-  to build/install `mintk` into `/usr/local/bin`.
+`install.sh` checks prerequisites (`check`), offers OS deps (`deps`), builds + installs
+the binary into `/usr/local/bin` (`build`), and seeds a starter `config.yaml` from
+`config.example.yaml` if none exists (`config`) — it never overwrites an existing config.
+The earlier bash `mint` and its `~/.config/mint/` config have been removed; there is no
+migration path.
 
 ## Done when
 
@@ -159,10 +160,13 @@ trust script over SSH, sudo via `ssh -t`, alias resolution via `ssh -G`),
 `platform.go` (WSL/PKCS#11/path helpers), `prompt.go` (huh helpers).
 `config.example.yaml` ships placeholders.
 
-- **Validated:** software-mode end-to-end (scopes CRUD → `key` signs → `ssh-keygen -L`
-  shows the right principal/validity), ttl validation, unknown-scope errors, `clean`
-  WSL gating, the `~/.ssh/config` editor (`go test`), `go vet`/`gofmt` clean.
-- **Not yet hardware-validated:** the agent (`-U`) and token (PKCS#11) paths and
-  `deploy` against a live host — these need the YubiKey/host in the loop (see
+- **Validated:** the agent (`-U`) path end-to-end on the WSL+Windows setup (mint via the
+  YubiKey agent → `ssh` into a host) — `mintk` is in daily use. Plus software-mode
+  end-to-end (scopes CRUD → `key` signs → `ssh-keygen -L` shows the right
+  principal/validity), ttl validation, unknown-scope errors, `clean` WSL gating, the
+  `~/.ssh/config` editor (`go test`), `go vet`/`gofmt` clean.
+- **Not yet hardware-validated:** the token (PKCS#11) path and `deploy` against a live
+  host — these need the YubiKey-on-this-machine / a target host in the loop (see
   [prerequisites.md](prerequisites.md)).
-- The bash `mint` + its config are left untouched until the agent path is validated.
+- The earlier bash `mint`, its `~/.config/mint/` config, and the `trust-ca` helper have
+  been removed.
