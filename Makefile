@@ -49,9 +49,9 @@ fmt-check:
 	@out="$$(gofmt -l $(GOFILES))"; \
 	if [ -n "$$out" ]; then echo "needs gofmt:"; echo "$$out"; exit 1; fi
 
-# Run the prerequisite checker (the install.sh "doctor").
-check:
-	./install.sh check
+# Run the prerequisite checker.
+check: build
+	./$(BIN) doctor
 
 clean:
 	rm -f $(BIN)

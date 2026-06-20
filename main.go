@@ -18,6 +18,7 @@ func main() {
 	}
 
 	root.AddCommand(initCmd())
+	root.AddCommand(doctorCmd())
 	root.AddCommand(keyCmd())
 	root.AddCommand(scopesCmd())
 	root.AddCommand(cleanCmd())

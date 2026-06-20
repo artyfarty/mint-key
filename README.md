@@ -38,21 +38,18 @@ PKCS#11 module `libykcs11` (token mode). See [docs/prerequisites.md](docs/prereq
 ```
 git clone <this-repo> ~/work/mint-key
 cd ~/work/mint-key
-./install.sh                 # checks prereqs, builds mintk → /usr/local/bin, seeds config
-```
-
-`./install.sh` is the guided path; the pieces are also available individually:
-`./install.sh check` (prerequisite "doctor"), `./install.sh deps` (OS packages),
-`./install.sh build` (build + install the binary), `./install.sh config` (write a starter
-config from the example).
-
-Just want the binary? Use the Makefile:
-
-```
 make                  # build ./mintk
 sudo make install     # install to /usr/local/bin (PREFIX=~/.local for a user install)
-make check            # run the prerequisite doctor
 ```
+
+Then check the machine has everything minting needs, and create your config:
+
+```
+mintk doctor          # prerequisite check (OpenSSH, CA, agent/PKCS#11 per mode)
+mintk init            # bootstrap config — import the CA from your YubiKey
+```
+
+`make check` runs `mintk doctor` too.
 
 `mintk` is portable: any machine with `ssh-keygen` + access to the CA (agent or token) and
 your `ca.pub` + config can issue certs — the authority travels on the YubiKey, the machine
@@ -73,6 +70,7 @@ an existing config (use `--force` to recreate).
 
 ```
 mintk init                           # bootstrap config (import CA from the YubiKey)
+mintk doctor                         # check prerequisites are in place
 mintk key <scope> [<ttl>]            # issue/refresh a cert for <scope> into the agent
 mintk scopes list                    # list configured scopes
 mintk scopes add <name> <principal> [<ttl>]

@@ -71,6 +71,14 @@ signing mode, **import the CA public key** (autodetect — inserted YubiKey via
 to `~/.config/mint-key/ca.pub`, and optionally set `scopes_file` (cloning the scopes git
 repo if given a URL). Refuses to clobber an existing config without `--force`.
 
+### `mintk doctor`
+Read-only prerequisite check (replaces the old `install.sh check`): OpenSSH tools +
+version (`-U` needs ≥7.6), the CA public key (+ fingerprint), and the pieces the
+configured mode needs — agent reachable with the CA loaded / a PKCS#11 module readable /
+software key file / wsl-delegate Windows paths — plus the scopes file. Exits non-zero on a
+failed required check. Works without a config (checks common + both backends, nudges to
+`mintk init`).
+
 ### `mintk key <scope> [<ttl>]`
 Mint a cert for `<scope>` (default ttl from the scope). Port the bash signing modes:
 
@@ -150,11 +158,11 @@ minidriver). `mintk` targets this path; `clean` handles the multi-card collision
 
 ## Install
 
-`install.sh` checks prerequisites (`check`), offers OS deps (`deps`), builds + installs
-the binary into `/usr/local/bin` (`build`), and seeds a starter `config.yaml` from
-`config.example.yaml` if none exists (`config`) — it never overwrites an existing config.
-The earlier bash `mint` and its `~/.config/mint/` config have been removed; there is no
-migration path.
+`make` builds the binary; `make install` puts it in `$(PREFIX)/bin` (default
+`/usr/local`). Then `mintk doctor` checks prerequisites (per platform / per mode) and
+`mintk init` creates the config (importing the CA from the YubiKey). The earlier bash
+`mint`, its `~/.config/mint/` config, and the `install.sh` bootstrap have been removed;
+there is no migration path.
 
 ## Done when
 
@@ -169,12 +177,12 @@ The Go binary is implemented at repo root (`go build -o mintk .`, module `mintk`
 Go 1.25 toolchain, cobra/huh/yaml pinned to wg-hop's versions). Layout: `main.go`
 (cobra root), `config.go` (YAML + `~`-expansion + `$MINTK_CONFIG` + external `scopes_file`
 load/save), `init.go` (`mintk init` bootstrap + CA import), `key.go` (all four signing
-modes + agent fingerprint check + agent-refused hint), `scopes.go` (list/add/delete + huh
-`edit` loop + git pull/push), `clean.go`, `deploy.go` (streams an idempotent trust script
-over SSH, sudo via `ssh -t`, alias resolution via `ssh -G`), `sshconfig.go` (add/edit
-`Host` blocks; unit-tested in `sshconfig_test.go`), `platform.go` (WSL/PKCS#11/path
-helpers), `prompt.go` (huh helpers). `config.example.yaml` ships placeholders;
-`install.sh` + `Makefile` build/install and check prerequisites.
+modes + agent fingerprint check + agent-refused hint), `doctor.go` (`mintk doctor`
+prerequisite checks), `scopes.go` (list/add/delete + huh `edit` loop + git pull/push),
+`clean.go`, `deploy.go` (streams an idempotent trust script over SSH, sudo via `ssh -t`,
+alias resolution via `ssh -G`), `sshconfig.go` (add/edit `Host` blocks; unit-tested in
+`sshconfig_test.go`), `platform.go` (WSL/PKCS#11/path helpers), `prompt.go` (huh helpers).
+`config.example.yaml` ships placeholders; the `Makefile` builds/installs.
 
 - **Validated:** the agent (`-U`) path end-to-end on the WSL+Windows setup (mint via the
   YubiKey agent → `ssh` into a host) — `mintk` is in daily use. Plus software-mode
