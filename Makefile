@@ -21,6 +21,7 @@ GOFILES := $(wildcard *.go)
 all: build
 
 build: $(BIN)
+	@echo "built: $(CURDIR)/$(BIN)  (install with 'make install')"
 
 $(BIN): $(GOFILES) go.mod go.sum
 	$(GO) build -o $(BIN) .
