@@ -4,6 +4,10 @@
 # Real config (lives outside the repo); only the .example is committed
 mint.conf
 config
+config.yaml
+
+# Compiled mintk binary (build with `go build -o mintk .`)
+/mintk
 
 # Key material — this is a PUBLIC repo, never commit any real keys/certs
 sessions/

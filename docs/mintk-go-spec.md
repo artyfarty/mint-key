@@ -111,6 +111,18 @@ run remotely (needs sudo on the host):
 Stream the CA pubkey + a small remote script over the SSH session (don't depend on the
 repo's bash `trust-ca` being present on the host).
 
+Extra behaviour (implemented):
+- **Alias-aware target:** `user@host` *or* a `~/.ssh/config` alias — resolved via
+  `ssh -G <target>` to the effective login user + hostname (the login user is what the
+  principal is appended to in `auth_principals/`).
+- **Interactive sudo:** the enroll step runs over `ssh -t` (a PTY), so `sudo` can prompt
+  for a password on the terminal; the script is read from a staged file, not stdin, so
+  the prompt isn't consumed.
+- **~/.ssh/config wiring:** unless `--no-ssh-config`, add/edit `Host <alias>` with
+  `IdentityFile <sessions_dir>/<scope>` + `IdentitiesOnly yes` so `ssh <alias>` uses the
+  minted cert and nothing else. Idempotent; existing `HostName`/`User`/other directives
+  in the block are preserved.
+
 ## Platform notes (hard-won — carry into the implementation)
 
 From design.md / the build log: native Win32 `ssh-keygen` has no PKCS#11; Git-Bash
@@ -134,3 +146,23 @@ minidriver). `mintk` targets this path; `clean` handles the multi-card collision
 `ssh <host>` logs in with the cert; `mintk clean` recovers after a YubiKey swap;
 `mintk deploy <scope> user@host` makes a fresh host accept the cert. Cross-platform build
 (Linux/macOS/WSL); generic/public-safe.
+
+## Status (implementation)
+
+The Go binary is implemented at repo root (`go build -o mintk .`, module `mintk`,
+Go 1.25 toolchain, cobra/huh/yaml pinned to wg-hop's versions). Layout: `main.go`
+(cobra root), `config.go` (YAML + `~`-expansion + `$MINTK_CONFIG`), `key.go` (all four
+signing modes + agent fingerprint check + agent-refused hint), `scopes.go`
+(list/add/delete + huh `edit` loop), `clean.go`, `deploy.go` (streams an idempotent
+trust script over SSH, sudo via `ssh -t`, alias resolution via `ssh -G`),
+`sshconfig.go` (add/edit `Host` blocks; unit-tested in `sshconfig_test.go`),
+`platform.go` (WSL/PKCS#11/path helpers), `prompt.go` (huh helpers).
+`config.example.yaml` ships placeholders.
+
+- **Validated:** software-mode end-to-end (scopes CRUD → `key` signs → `ssh-keygen -L`
+  shows the right principal/validity), ttl validation, unknown-scope errors, `clean`
+  WSL gating, the `~/.ssh/config` editor (`go test`), `go vet`/`gofmt` clean.
+- **Not yet hardware-validated:** the agent (`-U`) and token (PKCS#11) paths and
+  `deploy` against a live host — these need the YubiKey/host in the loop (see
+  [prerequisites.md](prerequisites.md)).
+- The bash `mint` + its config are left untouched until the agent path is validated.

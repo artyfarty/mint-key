@@ -1,0 +1,59 @@
+# config.example.yaml — copy to ~/.config/mint-key/config.yaml (or point
+# $MINTK_CONFIG at it) and fill in YOUR values. Keep the real config OUT of this
+# public repo. Everything here is a generic placeholder.
+
+# CA public key — identifies the CA in agent/token modes (the private key lives
+# on the YubiKey; in software mode set ca_key below instead).
+ca_pub: ~/.config/mint-key/ca.pub
+
+# Signing backend:
+#   agent        CA key exposed to the ssh-agent; sign with `ssh-keygen -U`
+#                (the validated WSL + Windows-agent path). RECOMMENDED.
+#   token        local PKCS#11 — YubiKey attached to this machine.
+#   software     a CA private key file (TESTING ONLY — never for real use).
+#   wsl-delegate WSL: sign via the Windows ssh-keygen + Windows PKCS#11.
+mode: agent
+
+# Where throwaway per-scope user keys + minted certs are written (mode 700).
+sessions_dir: ~/.ssh/sessions
+
+# Optional: lock issued certs to a source IP/CIDR (unusable from elsewhere).
+# Mind NAT / VPN egress addresses. Empty = off.
+source_address: ""
+
+# --- agent mode ---------------------------------------------------------------
+# The CA cert subject CN — `clean` purges Windows certs whose subject matches it.
+ca_cert_cn: ssh-user-ca-mintkey
+
+# --- token mode ---------------------------------------------------------------
+# PKCS#11 module path; leave empty to auto-detect libykcs11 / opensc-pkcs11.
+ykcs11: ""
+
+# --- software mode (testing only) --------------------------------------------
+ca_key: ""
+
+# --- wsl-delegate mode --------------------------------------------------------
+# win_ssh_keygen: "/mnt/c/Program Files/Git/usr/bin/ssh-keygen.exe"
+# win_ykcs11:     "C:\\Program Files\\Yubico\\Yubico PIV Tool\\bin\\libykcs11.dll"
+# win_stage:      "/mnt/c/Users/you/.mint"
+
+# --- windows helpers (WSL) ----------------------------------------------------
+win_ykman: "/mnt/c/Program Files/Yubico/YubiKey Manager CLI/ykman.exe"
+
+# --- scopes -------------------------------------------------------------------
+# A scope maps a name to a principal (what target hosts must list in their
+# AuthorizedPrincipalsFile) and a default ttl. Use YOUR real principals in your
+# private config; these are placeholders.
+scopes:
+  - name: example-host
+    principal: host-example
+    ttl: 8h
+  - name: deploy
+    principal: deploy-example
+    ttl: 24h
+  - name: general
+    principal: general
+    ttl: 24h
+  - name: danger
+    principal: danger-example
+    ttl: 1h
