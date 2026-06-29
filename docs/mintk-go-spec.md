@@ -122,6 +122,15 @@ purge every `CurrentUser\My` cert whose subject matches `ca_cert_cn`
 Windows' Certificate Propagation re-enrolls only its (linked) cert. (Port the bash
 `clean_store`.) Gate on WSL.
 
+### `mintk clean-keys`
+Local cleanup of minted identities (distinct from `clean`, which is the Windows
+cert-store command). Removes every throwaway per-scope key and minted cert under
+`sessions_dir` — the `mintk key` output. The private keys there never leave the
+host and are re-created on the next `mintk key`, so wiping them only forces a
+fresh tap/sign; useful for tidy-up or before handing a machine off. Prompts for
+confirmation (default No); `-y`/`--yes` skips the prompt for scripts, and is
+required when stdin isn't a terminal. Leaves the `sessions_dir` itself in place.
+
 ### `mintk deploy <scope> user@host`
 "ssh-copy-id for the CA": enroll a host to trust the CA + accept the scope's principal,
 using the operator's current SSH access to the host. Port the repo's `trust-ca` logic,
@@ -145,6 +154,18 @@ Extra behaviour (implemented):
   `IdentityFile <sessions_dir>/<scope>` + `IdentitiesOnly yes` so `ssh <alias>` uses the
   minted cert and nothing else. Idempotent; existing `HostName`/`User`/other directives
   in the block are preserved.
+- **Bootstrap identity:** `-i`/`--identity <file>` is passed straight to the `ssh`
+  invocations that connect to the target (`ssh -i <file> -o IdentitiesOnly=yes`), for
+  authenticating with a chosen key — e.g. a password/bootstrap key when the cert isn't
+  trusted yet. It affects only the enrollment connection, not the staged trust script.
+
+### CLI behaviour (all commands)
+When a command is invoked with the wrong number/shape of positional arguments or an
+unknown flag, `mintk` prints that command's full help (not just a one-line error) before
+the error. Implemented in `main.go`: a recursive wrapper over each command's `Args`
+validator, plus a root `FlagErrorFunc` (inherited by subcommands) for flag-parse errors.
+`SilenceUsage`/`SilenceErrors` stay on so *runtime* errors (bad config, signing failures)
+don't dump usage.
 
 ## Platform notes (hard-won — carry into the implementation)
 
@@ -179,8 +200,9 @@ Go 1.25 toolchain, cobra/huh/yaml pinned to wg-hop's versions). Layout: `main.go
 load/save), `init.go` (`mintk init` bootstrap + CA import), `key.go` (all four signing
 modes + agent fingerprint check + agent-refused hint), `doctor.go` (`mintk doctor`
 prerequisite checks), `scopes.go` (list/add/delete + huh `edit` loop + git pull/push),
-`clean.go`, `deploy.go` (streams an idempotent trust script over SSH, sudo via `ssh -t`,
-alias resolution via `ssh -G`), `sshconfig.go` (add/edit `Host` blocks; unit-tested in
+`clean.go`, `cleankeys.go` (`mintk clean-keys` — wipe `sessions_dir` with confirm/`-y`),
+`deploy.go` (streams an idempotent trust script over SSH, sudo via `ssh -t`, `-i` bootstrap
+identity, alias resolution via `ssh -G`), `sshconfig.go` (add/edit `Host` blocks; unit-tested in
 `sshconfig_test.go`), `platform.go` (WSL/PKCS#11/path helpers), `prompt.go` (huh helpers).
 `config.example.yaml` ships placeholders; the `Makefile` builds/installs.
 

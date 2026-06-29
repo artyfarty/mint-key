@@ -11,7 +11,7 @@ cert expires.
 ## What this is (and isn't)
 
 - It is the generic **tooling**: the `mintk` binary (commands `init` / `doctor` / `key` /
-  `scopes` / `clean` / `deploy`), a `Makefile`, an example config, and docs explaining the
+  `scopes` / `clean` / `clean-keys` / `deploy`), a `Makefile`, an example config, and docs explaining the
   model.
 - It is **not** anyone's deployment. Real CA keys, real hostnames/principals, and real
   configs live **outside this repo** (in the operator's private config / secret store).

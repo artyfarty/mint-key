@@ -12,6 +12,7 @@ import (
 
 func deployCmd() *cobra.Command {
 	var noSSHConfig bool
+	var identity string
 	cmd := &cobra.Command{
 		Use:   "deploy <scope> <user@host|alias>",
 		Short: "Enroll a host to trust the CA and accept the scope's principal (ssh-copy-id for the CA)",
@@ -22,6 +23,9 @@ func deployCmd() *cobra.Command {
   - sshd -t, then reload sshd
 The target may be a full user@host or a ~/.ssh/config alias (resolved via
 ssh -G). sudo can prompt for a password interactively (a PTY is allocated).
+Use -i/--identity to pick the key you authenticate to the target with (passed
+straight to ssh -i), e.g. when the cert isn't deployed yet and you need a
+password/bootstrap key.
 Then, unless --no-ssh-config, ~/.ssh/config is updated so "ssh <target>" uses
 the minted cert (IdentityFile = the scope's session key, IdentitiesOnly yes).
 Idempotent; reports what changed.`,
@@ -31,15 +35,17 @@ Idempotent; reports what changed.`,
 			if err != nil {
 				return err
 			}
-			return runDeploy(cfg, args[0], args[1], !noSSHConfig)
+			return runDeploy(cfg, args[0], args[1], !noSSHConfig, identity)
 		},
 	}
 	cmd.Flags().BoolVar(&noSSHConfig, "no-ssh-config", false,
 		"Don't add/edit the host in ~/.ssh/config")
+	cmd.Flags().StringVarP(&identity, "identity", "i", "",
+		"SSH identity file to authenticate to the target (ssh -i)")
 	return cmd
 }
 
-func runDeploy(cfg *Config, scopeName, target string, editSSHConfig bool) error {
+func runDeploy(cfg *Config, scopeName, target string, editSSHConfig bool, identity string) error {
 	sc, ok := cfg.scope(scopeName)
 	if !ok {
 		return fmt.Errorf("unknown scope %q (try: %s scopes list)", scopeName, prog)
@@ -58,9 +64,19 @@ func runDeploy(cfg *Config, scopeName, target string, editSSHConfig bool) error 
 
 	script := buildTrustScript(strings.TrimSpace(string(caLine)), user, sc.Principal)
 
+	// Identity options prepended to every ssh invocation. With -i we also force
+	// IdentitiesOnly so the explicit key is the only one offered.
+	idOpts := []string{}
+	if identity != "" {
+		idOpts = append(idOpts, "-i", expandPath(identity), "-o", "IdentitiesOnly=yes")
+	}
+	sshArgs := func(extra ...string) []string {
+		return append(append([]string{}, idOpts...), extra...)
+	}
+
 	// 1) stream the script to a temp file on the host (plain user, no sudo).
 	remotePath := "/tmp/mintk-trust.sh"
-	stage := exec.Command("ssh", target, "cat > "+remotePath+" && chmod 700 "+remotePath)
+	stage := exec.Command("ssh", sshArgs(target, "cat > "+remotePath+" && chmod 700 "+remotePath)...)
 	stage.Stdin = strings.NewReader(script)
 	stage.Stdout = os.Stdout
 	stage.Stderr = os.Stderr
@@ -73,8 +89,8 @@ func runDeploy(cfg *Config, scopeName, target string, editSSHConfig bool) error 
 	//    terminal free for the password prompt.
 	fmt.Printf("%s: enrolling %s on %s (principal=%s) — sudo may prompt for a password...\n",
 		prog, scopeName, target, sc.Principal)
-	apply := exec.Command("ssh", "-t", target,
-		"sudo bash "+remotePath+"; rc=$?; rm -f "+remotePath+"; exit $rc")
+	apply := exec.Command("ssh", sshArgs("-t", target,
+		"sudo bash "+remotePath+"; rc=$?; rm -f "+remotePath+"; exit $rc")...)
 	apply.Stdin = os.Stdin
 	apply.Stdout = os.Stdout
 	apply.Stderr = os.Stderr

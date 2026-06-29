@@ -77,8 +77,13 @@ mintk scopes add <name> <principal> [<ttl>]
 mintk scopes edit                    # interactive editor
 mintk scopes pull | push             # sync the shared scopes file via git
 mintk clean                          # (WSL+agent) recover after swapping YubiKeys
+mintk clean-keys [-y]                # wipe minted session keys+certs from sessions_dir
 mintk deploy <scope> user@host       # enroll a host to trust the CA + accept the scope
+mintk deploy <scope> host -i <key>   #   ...authenticating to the host with a chosen key
 ```
+
+Pass the wrong arguments (or an unknown flag) to any command and `mintk` prints that
+command's full help.
 
 Scopes, principals, default lifetimes, the signing mode, CA location and the PKCS#11 path
 are all set in your config (`~/.config/mint-key/config.yaml`, or `$MINTK_CONFIG`); see
