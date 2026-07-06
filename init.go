@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -53,14 +54,16 @@ func runInit(force bool) error {
 		rec = "agent"
 	}
 	var modeOpts []string
-	for _, m := range modes {
+	recIdx := 0
+	for i, m := range modes {
 		label := fmt.Sprintf("%-12s — %s", m, modeDesc[m])
 		if m == rec {
 			label += "  [recommended here]"
+			recIdx = i
 		}
 		modeOpts = append(modeOpts, label)
 	}
-	mi, err := promptChoice("Signing mode — how mintk reaches the CA private key", modeOpts)
+	mi, err := promptChoiceDefault("Signing mode — how mintk reaches the CA private key", modeOpts, recIdx)
 	if err != nil {
 		return err
 	}
@@ -211,16 +214,30 @@ func importCAPub(cfg *Config) (string, error) {
 		fmt.Printf("  • ssh-agent: %d key(s)\n", len(cands)-before)
 	}
 
+	// Annotate candidates with their PIV slot (9a/9c/…) where we can resolve it —
+	// via libykcs11 every candidate carries the same module-path comment, so the
+	// slot is the only human-readable way to tell keys apart. Pre-select 9c (the
+	// slot the CA lives in throughout the docs/examples).
+	slotByFP := pivSlotByFingerprint()
 	var options []string
+	defIdx, defSet := 0, false
 	for _, c := range cands {
-		options = append(options, fmt.Sprintf("[%s] %s", c.source, abbrevPub(c.line)))
+		fp := pubFingerprint(c.line)
+		label := fmt.Sprintf("[%s] %s", c.source, abbrevPubFP(c.line, fp))
+		if slot := slotByFP[fp]; slot != "" {
+			label += fmt.Sprintf("  (PIV slot %s)", strings.ToUpper(slot))
+			if slot == "9c" && !defSet {
+				defIdx, defSet = len(options), true
+			}
+		}
+		options = append(options, label)
 	}
 	pasteIdx := len(options)
 	options = append(options, "Paste a public key")
 	fileIdx := len(options)
 	options = append(options, "Read from a file")
 
-	idx, err := promptChoice("Import CA public key from", options)
+	idx, err := promptChoiceDefault("Import CA public key from", options, defIdx)
 	if err != nil {
 		return "", err
 	}
@@ -271,18 +288,101 @@ func caComment(line string) string {
 // `ssh-keygen -lf ca.pub` / `install.sh check` print for the CA — since PKCS#11
 // keys often carry no comment/CN.
 func abbrevPub(line string) string {
+	return abbrevPubFP(line, pubFingerprint(line))
+}
+
+// abbrevPubFP is abbrevPub with a precomputed fingerprint (avoids re-shelling to
+// ssh-keygen when the caller already has it).
+func abbrevPubFP(line, fp string) string {
 	f := strings.Fields(line)
 	if len(f) < 2 {
 		return line
 	}
 	parts := []string{f[0]}
-	if fp := pubFingerprint(line); fp != "" {
+	if fp != "" {
 		parts = append(parts, fp)
 	}
 	if c := caComment(line); c != "" {
 		parts = append(parts, c)
 	}
 	return strings.Join(parts, "  ")
+}
+
+// pivSlotByFingerprint maps each inserted YubiKey's SSH public-key fingerprint to
+// its PIV slot ("9a", "9c", …), best-effort via ykman. Empty when ykman is absent
+// or can't reach a card. Used only to annotate the init picker — a wrong/empty map
+// never blocks import, it just drops the slot hint.
+func pivSlotByFingerprint() map[string]string {
+	yk := ykmanBin()
+	if yk == "" {
+		return nil
+	}
+	info, err := runOut(yk, "piv", "info")
+	if err != nil || strings.TrimSpace(info) == "" {
+		return nil
+	}
+	m := map[string]string{}
+	for _, slot := range parsePIVSlots(info) {
+		pem, err := runOut(yk, "piv", "keys", "export", slot, "-")
+		if err != nil || strings.TrimSpace(pem) == "" {
+			continue // no exportable public key in this slot
+		}
+		if fp := pemPubFingerprint(pem); fp != "" {
+			m[fp] = strings.ToLower(slot)
+		}
+	}
+	return m
+}
+
+// ykmanBin finds a usable ykman: the native one, or ykman.exe under WSL (where the
+// card lives on the Windows side).
+func ykmanBin() string {
+	if p, err := exec.LookPath("ykman"); err == nil {
+		return p
+	}
+	if inWSL() {
+		if p, err := exec.LookPath("ykman.exe"); err == nil {
+			return p
+		}
+	}
+	return ""
+}
+
+// parsePIVSlots pulls the slot IDs ("9A", "9C", …) from `ykman piv info` output,
+// which prints one "Slot 9C (SIGNATURE):" header per populated slot.
+func parsePIVSlots(info string) []string {
+	var slots []string
+	for _, l := range strings.Split(info, "\n") {
+		l = strings.TrimSpace(l)
+		if !strings.HasPrefix(l, "Slot ") {
+			continue
+		}
+		id := strings.TrimSuffix(strings.Fields(strings.TrimPrefix(l, "Slot "))[0], ":")
+		if len(id) == 2 {
+			slots = append(slots, id)
+		}
+	}
+	return slots
+}
+
+// pemPubFingerprint returns the SSH SHA256 fingerprint of a PKCS#8/SubjectPublicKeyInfo
+// PEM public key (as `ykman piv keys export` emits), or "".
+func pemPubFingerprint(pemPub string) string {
+	tf, err := os.CreateTemp("", "mintk-piv-*.pem")
+	if err != nil {
+		return ""
+	}
+	defer os.Remove(tf.Name())
+	if _, err := tf.WriteString(pemPub); err != nil {
+		tf.Close()
+		return ""
+	}
+	tf.Close()
+	ssh, err := runOut("ssh-keygen", "-i", "-m", "PKCS8", "-f", tf.Name())
+	if err != nil || strings.TrimSpace(ssh) == "" {
+		return ""
+	}
+	return pubFingerprint(firstLine(ssh))
 }
 
 // pubFingerprint returns the SHA256 fingerprint of a single public-key line, or "".

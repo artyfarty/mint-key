@@ -46,6 +46,12 @@ YubiKey via PKCS#11, from the ssh-agent, or pasted / from a file), and optionall
 a **shared scopes file** (a private git repo) so your scope list travels with you. It
 writes `~/.config/mint-key/config.yaml` (override location with `$MINTK_CONFIG`).
 
+The mode prompt defaults to the mode recommended for this machine. In the CA picker,
+candidates read off a YubiKey are tagged with their **PIV slot** (e.g. `(PIV slot 9C)`)
+when `ykman` can resolve it — handy because via `libykcs11` every key otherwise shows the
+same module-path comment. The CA lives in **slot 9C** throughout these docs, so a 9C
+candidate is pre-selected; verify the fingerprint matches your `ca.pub` before accepting.
+
 Prefer to do it by hand? Copy [`config.example.yaml`](../config.example.yaml) to
 `~/.config/mint-key/config.yaml` and fill in `mode`, `ca_pub`, and either `scopes_file`
 or an inline `scopes:` list. For `token` mode set `ykcs11` if autodetection misses your

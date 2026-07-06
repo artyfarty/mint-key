@@ -14,7 +14,15 @@ func isInteractive() bool {
 
 // promptChoice shows a select list and returns the 0-based index.
 func promptChoice(label string, options []string) (int, error) {
-	var selected int
+	return promptChoiceDefault(label, options, 0)
+}
+
+// promptChoiceDefault is promptChoice with the cursor pre-placed on def.
+func promptChoiceDefault(label string, options []string, def int) (int, error) {
+	selected := def
+	if selected < 0 || selected >= len(options) {
+		selected = 0
+	}
 	opts := make([]huh.Option[int], len(options))
 	for i, o := range options {
 		opts[i] = huh.NewOption(o, i)
