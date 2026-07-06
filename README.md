@@ -51,6 +51,24 @@ mintk init            # bootstrap config — import the CA from your YubiKey
 
 `make check` runs `mintk doctor` too.
 
+### Prerequisites by hand — macOS
+
+macOS already ships OpenSSH and a PC/SC stack (no `pcscd` to run), so for token mode you
+only add the YubiKey tooling via [Homebrew](https://brew.sh) and a Go toolchain:
+
+```
+brew install go                       # to build ./mintk
+brew install ykman                    # YubiKey slot management (ykman)
+brew install yubico-piv-tool          # Yubico PKCS#11 module (libykcs11)
+# or, alternatively:
+brew install opensc                   # OpenSC PKCS#11 module (opensc-pkcs11.so)
+```
+
+The PKCS#11 module lands under Homebrew's prefix — Apple Silicon
+`/opt/homebrew/lib/libykcs11.dylib` (Intel `/usr/local/lib/libykcs11.dylib`), or
+`…/lib/opensc-pkcs11.so` for OpenSC. `mintk` autodetects these paths; if yours differs,
+set `ykcs11` in your config. Then run `mintk doctor` to confirm everything's in place.
+
 `mintk` is portable: any machine with `ssh-keygen` + access to the CA (agent or token) and
 your `ca.pub` + config can issue certs — the authority travels on the YubiKey, the machine
 is never "trusted."
