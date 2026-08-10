@@ -143,6 +143,7 @@ type ageClient struct {
 	bin       string // age binary; under wsl-windows an .exe reached through interop
 	identity  string // identity path, in the form the client understands
 	pluginDir string // dir holding age-plugin-yubikey(.exe); prepended to the child's PATH
+	scratch   string // tmpfs scratch dir for decrypts that must go through a file
 }
 
 // newAgeClient resolves the configured mode into a runnable client.
@@ -256,16 +257,27 @@ func (a *ageClient) command(args ...string) *exec.Cmd {
 	return cmd
 }
 
-// decrypt turns one blob into its plaintext. Ciphertext goes in on stdin and
-// plaintext comes back on stdout, so no path ever has to be translated for the
-// Windows client and — crucially — plaintext never lands on a Windows-visible
-// filesystem. stderr is passed through so the "touch your YubiKey" prompt and
-// any PIN dialog are visible.
+// decrypt turns one blob into its plaintext. This is the one card interaction of
+// a grant, and it is never retried automatically: the PIV PIN is applet-wide, so
+// three bad attempts also block the CA signing slot.
 //
-// This is the one card interaction of a grant. A failure is never retried
-// automatically: the PIV PIN is applet-wide, so three bad attempts also block
-// the CA signing slot.
-func (a *ageClient) decrypt(blob []byte) ([]byte, error) {
+// How it runs depends on whether the card is reachable from this process or only
+// from Windows — see decryptPiped and decryptViaConsole.
+func (a *ageClient) decrypt(blobPath string) ([]byte, error) {
+	if a.mode == secretModeWSL {
+		return a.decryptViaConsole(blobPath)
+	}
+	return a.decryptPiped(blobPath)
+}
+
+// decryptPiped is the straightforward path: ciphertext in on stdin, plaintext
+// out on stdout, prompts on the inherited stderr. Used wherever the age client
+// runs on this side and shares our terminal.
+func (a *ageClient) decryptPiped(blobPath string) ([]byte, error) {
+	blob, err := os.ReadFile(blobPath)
+	if err != nil {
+		return nil, err
+	}
 	cmd := a.command("--decrypt", "-i", a.identity)
 	cmd.Stdin = bytes.NewReader(blob)
 	var out, errb bytes.Buffer
@@ -275,6 +287,157 @@ func (a *ageClient) decrypt(blob []byte) ([]byte, error) {
 		return nil, fmt.Errorf("age decrypt failed: %s", ageError(errb.String(), err))
 	}
 	return out.Bytes(), nil
+}
+
+// decryptViaConsole runs the Windows age client in a console window of its own.
+//
+// It has to. The Windows client does not prompt for the PIV PIN on stderr — it
+// opens CONIN$/CONOUT$, the process's *console*. A child launched from WSL with
+// pipes for stdio has no console bound to the terminal, so the prompt is written
+// somewhere invisible and the client waits forever for input nobody can give:
+// a silent hang, with not one byte on stderr. Inheriting the terminal for stderr
+// alone doesn't fix it either — measured, both ways.
+//
+// So the decrypt gets a real console, and the data moves by file instead:
+//   - the blob is read over `\\wsl.localhost\...`, so no ciphertext is staged on
+//     a Windows filesystem either;
+//   - plaintext is written straight into the tmpfs scratch dir over the same
+//     share — it never touches NTFS;
+//   - the window closes by itself when age exits (`start /wait`, no `/k`, no
+//     `pause`), and its exit status comes back to us.
+//
+// The command goes through a throwaway .bat because quotes do not survive the
+// WSL→Windows argv boundary: `cmd /c start "title" ...` arrives as
+// `start \"title\" ...` and cmd takes the title for a program name.
+func (a *ageClient) decryptViaConsole(blobPath string) ([]byte, error) {
+	if a.scratch == "" {
+		return nil, fmt.Errorf("no scratch dir set for the console decrypt (internal error)")
+	}
+	if err := os.MkdirAll(a.scratch, 0o700); err != nil {
+		return nil, err
+	}
+	out, err := os.CreateTemp(a.scratch, "plain-*")
+	if err != nil {
+		return nil, err
+	}
+	outPath := out.Name()
+	out.Close()
+	defer func() {
+		overwriteFile(outPath)
+		os.Remove(outPath)
+	}()
+	// age refuses to overwrite an existing file, and we only wanted the name.
+	os.Remove(outPath)
+
+	blobWin, err := winPath(blobPath)
+	if err != nil {
+		return nil, err
+	}
+	outWin, err := winPath(outPath)
+	if err != nil {
+		return nil, err
+	}
+
+	batDir, err := winTempDir()
+	if err != nil {
+		return nil, err
+	}
+	bat, err := os.CreateTemp(batDir, "mintk-*.bat")
+	if err != nil {
+		return nil, fmt.Errorf("stage the launcher: %w", err)
+	}
+	batPath := bat.Name()
+	defer os.Remove(batPath)
+	// CRLF and a leading @echo off: this is a Windows batch file. It carries
+	// paths only — never a secret.
+	script := "@echo off\r\n"
+	if a.pluginDir != "" {
+		pd, err := winPath(a.pluginDir)
+		if err != nil {
+			return nil, err
+		}
+		script += "set PATH=" + pd + ";%PATH%\r\n"
+	}
+	script += fmt.Sprintf("start \"mintk secret\" /wait \"%s\" --decrypt -i \"%s\" -o \"%s\" \"%s\"\r\n",
+		a.bin2win(), a.identity, outWin, blobWin)
+	script += "exit /b %ERRORLEVEL%\r\n"
+	if _, err := bat.WriteString(script); err != nil {
+		bat.Close()
+		return nil, err
+	}
+	bat.Close()
+	batWin, err := winPath(batPath)
+	if err != nil {
+		return nil, err
+	}
+
+	fmt.Printf("%s: a console window is opening for the YubiKey prompt — answer it there\n", prog)
+	cmd := exec.Command("cmd.exe", "/c", batWin)
+	cmd.Dir = "/mnt/c" // cmd.exe refuses a WSL working directory
+	var errb bytes.Buffer
+	cmd.Stderr = io.MultiWriter(os.Stderr, &errb)
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("age decrypt failed (see the console window): %s", ageError(errb.String(), err))
+	}
+	plain, err := os.ReadFile(outPath)
+	if err != nil {
+		return nil, fmt.Errorf("the decrypt produced no output — was the prompt cancelled?")
+	}
+	return plain, nil
+}
+
+// bin2win renders the age binary in the form the Windows shell needs.
+func (a *ageClient) bin2win() string {
+	if p, err := winPath(a.bin); err == nil {
+		return p
+	}
+	return a.bin
+}
+
+// winPath converts a WSL path to the form a Windows process can open. Paths
+// under /mnt/... become drive paths; everything else becomes a
+// \\wsl.localhost\... share path — which reaches tmpfs, so plaintext can be
+// handed to a Windows process without ever being written to a Windows disk.
+func winPath(p string) (string, error) {
+	if !strings.HasPrefix(p, "/") {
+		return p, nil // already a Windows path
+	}
+	out, err := exec.Command("wslpath", "-w", p).Output()
+	if err != nil {
+		return "", fmt.Errorf("translate %s for Windows: %w", p, err)
+	}
+	w := strings.TrimSpace(stripCR(string(out)))
+	if w == "" {
+		return "", fmt.Errorf("could not translate %s for Windows", p)
+	}
+	return w, nil
+}
+
+// winTempDirCache memoises the Windows temp directory (one interop call).
+var winTempDirCache string
+
+// winTempDir resolves %TEMP% as a WSL path — somewhere Windows can definitely
+// execute a batch file from.
+func winTempDir() (string, error) {
+	if winTempDirCache != "" {
+		return winTempDirCache, nil
+	}
+	cmd := exec.Command("cmd.exe", "/c", "echo %TEMP%")
+	cmd.Dir = "/mnt/c"
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("resolve the Windows temp dir: %w", err)
+	}
+	win := strings.TrimSpace(stripCR(string(out)))
+	if win == "" || strings.Contains(win, "%") {
+		return "", fmt.Errorf("could not resolve %%TEMP%% on the Windows side")
+	}
+	p, err := exec.Command("wslpath", "-u", win).Output()
+	if err != nil {
+		return "", err
+	}
+	winTempDirCache = strings.TrimSpace(stripCR(string(p)))
+	return winTempDirCache, nil
 }
 
 // encrypt armours plaintext to the given recipients. Armour keeps the repo

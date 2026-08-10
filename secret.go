@@ -75,6 +75,18 @@ func openSecrets() (*secretSession, error) {
 	return &secretSession{cfg: cfg, sec: sec, st: st}, nil
 }
 
+// ageClient builds the age client with its scratch dir on tmpfs — the
+// wsl-windows decrypt hands plaintext back through a file, and that file must
+// never land anywhere but tmpfs.
+func (sess *secretSession) ageClient() (*ageClient, error) {
+	client, err := newAgeClient(sess.sec)
+	if err != nil {
+		return nil, err
+	}
+	client.scratch = sess.st.scratchDir()
+	return client, nil
+}
+
 // --- grant -------------------------------------------------------------------
 
 func secretGrantCmd() *cobra.Command {
@@ -125,7 +137,7 @@ func runSecretGrant(names []string, ttlOverride string) error {
 		name string
 		ttl  string
 		d    time.Duration
-		blob []byte
+		blob string // path; the decrypt reads it itself (a console decrypt needs a file)
 	}
 	jobs := make([]job, 0, len(names))
 	for _, name := range names {
@@ -144,18 +156,14 @@ func runSecretGrant(names []string, ttlOverride string) error {
 		if err != nil {
 			return err
 		}
-		blob, err := os.ReadFile(p)
-		if err != nil {
-			if os.IsNotExist(err) {
-				return fmt.Errorf("unknown secret scope %q (no blob at %s)\n"+
-					"  try: %s secret list   or create it: %s secret edit %s", name, p, prog, prog, name)
-			}
-			return err
+		if !fileExists(p) {
+			return fmt.Errorf("unknown secret scope %q (no blob at %s)\n"+
+				"  try: %s secret list   or create it: %s secret edit %s", name, p, prog, prog, name)
 		}
-		jobs = append(jobs, job{name: name, ttl: ttl, d: d, blob: blob})
+		jobs = append(jobs, job{name: name, ttl: ttl, d: d, blob: p})
 	}
 
-	client, err := newAgeClient(sess.sec)
+	client, err := sess.ageClient()
 	if err != nil {
 		return err
 	}
@@ -529,7 +537,7 @@ func runSecretEdit(name string, push, allowEmpty bool) error {
 	if err != nil {
 		return err
 	}
-	client, err := newAgeClient(sess.sec)
+	client, err := sess.ageClient()
 	if err != nil {
 		return err
 	}
@@ -548,12 +556,8 @@ func runSecretEdit(name string, push, allowEmpty bool) error {
 	work := filepath.Join(ws, name)
 	var before []byte
 	if fileExists(blobPath) {
-		blob, err := os.ReadFile(blobPath)
-		if err != nil {
-			return err
-		}
 		fmt.Printf("%s: decrypting %s for editing  [YubiKey — PIN if needed + touch]\n", prog, name)
-		if before, err = client.decrypt(blob); err != nil {
+		if before, err = client.decrypt(blobPath); err != nil {
 			printPINWarning()
 			return err
 		}
@@ -700,7 +704,7 @@ func runSecretReencrypt(names []string, all, push bool) error {
 	if err != nil {
 		return err
 	}
-	client, err := newAgeClient(sess.sec)
+	client, err := sess.ageClient()
 	if err != nil {
 		return err
 	}
@@ -720,12 +724,8 @@ func runSecretReencrypt(names []string, all, push bool) error {
 
 	fmt.Printf("%s: re-encrypting %d blob(s) to %d recipient(s)\n", prog, len(paths), len(recipients))
 	for i, name := range names {
-		blob, err := os.ReadFile(paths[i])
-		if err != nil {
-			return err
-		}
 		fmt.Printf("%s: %s  [YubiKey — PIN if needed + touch]\n", prog, name)
-		plain, err := client.decrypt(blob)
+		plain, err := client.decrypt(paths[i])
 		if err != nil {
 			printPINWarning()
 			return err

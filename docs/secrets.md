@@ -7,7 +7,7 @@ consumer can read it for a while.
 ```
 mintk secret grant <scope> [<ttl>]
   → one YubiKey interaction (PIN if needed + one touch)
-  → decrypt that scope's blob
+  → decrypt that scope's blob (on Windows+WSL, in a console window of its own)
   → plaintext on tmpfs, mode 0600
   → an expiry, enforced by an independent wiper
 ```
@@ -54,10 +54,33 @@ rather than special-casing anything:
 | `software` | A plain age X25519 identity file. Testing only — no hardware, no tap. |
 
 `wsl-windows` works because `/proc/sys/fs/binfmt_misc/WSLInterop` lets Linux execute
-Windows binaries directly. Ciphertext goes in on the child's **stdin** and plaintext comes
-back on its **stdout**, so no path has to be translated for the Windows client and — the
-part that matters — **plaintext never touches an NTFS filesystem.** stderr is passed
-through, so the touch prompt is visible.
+Windows binaries directly.
+
+**Encrypting** runs headless: plaintext in on the child's stdin, ciphertext out on stdout.
+No card is involved — a `age1yubikey1…` recipient needs the plugin binary but no PIN and no
+touch — so nothing has to prompt.
+
+**Decrypting cannot run that way.** The Windows client does not ask for the PIV PIN on
+stderr; it opens `CONIN$`/`CONOUT$`, the process's *console*. A child launched from WSL
+with pipes for stdio has no console bound to your terminal, so the prompt goes somewhere
+invisible and the client waits forever for input nobody can give — **a silent hang, with
+not one byte on stderr**. Inheriting the terminal for stderr alone does not fix it; both
+were measured.
+
+So a decrypt gets a console of its own: `mintk` writes a throwaway `.bat` and runs
+`start "mintk secret" /wait …`, which opens a real console window, and closes it again by
+itself when age exits (no `/k`, no `pause`). Data moves by file rather than pipe, over the
+`\\wsl.localhost\…` share:
+
+- the blob is read straight from the WSL repo — no ciphertext staged on a Windows disk;
+- plaintext is written into the tmpfs scratch dir over that same share, so it **still never
+  touches NTFS** — the share reaches tmpfs, which was the thing worth checking;
+- the window's exit status comes back, so failures are still errors and not silence.
+
+The `.bat` exists because quotes do not survive the WSL→Windows argv boundary:
+`cmd /c start "title" …` arrives as `start \"title\" …` and cmd takes the title for a
+program name. Inside a batch file nothing re-quotes anything. It contains paths only,
+never a secret, and is deleted afterwards.
 
 ## TTL is enforced by an independent wiper
 
@@ -314,7 +337,12 @@ wiring.
   with `unknown identity type`. `mintk` strips `\r` from captured *text* and never from
   ciphertext or plaintext.
 - **`cmd /k` leaves a console alive** after the command. Any interactive window has to exit
-  by itself — no `pause`.
+  by itself — no `pause`. `start /wait` from a batch file does exactly that.
+- **The PIN prompt needs a console, not a terminal.** Pipes on stdio mean the Windows age
+  client hangs silently forever; see the decrypt path above. Anything that shells out to a
+  Windows binary expecting interactive input hits this.
+- **Quotes are eaten crossing WSL→Windows argv.** Put the command in a batch file rather
+  than fighting the escaping.
 - **A touch is required per decrypt**, served from the 15 s cache. Hence bursts.
 - **Multiple YubiKeys are not interchangeable.** Unlike a CA key, which is imported onto
   every card, an age identity is generated *on* a card and can never leave it. Each card

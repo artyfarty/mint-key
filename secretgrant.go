@@ -59,7 +59,7 @@ func newGrantStore(s *SecretsConfig) (*grantStore, error) {
 			root, fsOrUnknown(fs))
 	}
 	st := &grantStore{root: root}
-	for _, d := range []string{st.secretsDir(), st.grantsDir(), st.editDir()} {
+	for _, d := range []string{st.secretsDir(), st.grantsDir(), st.editDir(), st.scratchDir()} {
 		if err := os.MkdirAll(d, 0o700); err != nil {
 			return nil, err
 		}
@@ -110,6 +110,7 @@ func defaultRuntimeDir() (string, error) {
 func (st *grantStore) secretsDir() string       { return filepath.Join(st.root, "secrets") }
 func (st *grantStore) grantsDir() string        { return filepath.Join(st.root, "grants") }
 func (st *grantStore) editDir() string          { return filepath.Join(st.root, "edit") }
+func (st *grantStore) scratchDir() string       { return filepath.Join(st.root, "scratch") }
 func (st *grantStore) path(scope string) string { return filepath.Join(st.secretsDir(), scope) }
 func (st *grantStore) meta(scope string) string { return filepath.Join(st.grantsDir(), scope+".json") }
 func (st *grantStore) exists(scope string) bool { return fileExists(st.path(scope)) }
@@ -264,6 +265,18 @@ func (st *grantStore) sweep() int {
 			st.wipeFile(e.Name())
 			n++
 		}
+	}
+	// Scratch files are transient by construction: anything still here is the
+	// residue of an interrupted decrypt.
+	scratch, _ := os.ReadDir(st.scratchDir())
+	for _, e := range scratch {
+		if e.IsDir() {
+			continue
+		}
+		p := filepath.Join(st.scratchDir(), e.Name())
+		overwriteFile(p)
+		_ = os.Remove(p)
+		n++
 	}
 	// Edit workspaces belonging to processes that are gone (crash, SIGKILL).
 	dirs, _ := os.ReadDir(st.editDir())

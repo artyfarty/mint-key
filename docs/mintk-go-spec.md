@@ -245,6 +245,11 @@ card queries, binary autodetection, repo setup) and `secret_test.go`.
   CR and NUL bytes coming back **byte-for-byte identical** — the stdin/stdout pipe mangles
   nothing. Run with an X25519 identity, so the plugin and card are the one piece still
   unproven from inside `mintk`.
+- **The wsl-windows decrypt runs in its own console window** — the Windows client reads the
+  PIV PIN from `CONIN$`, so a child with piped stdio hangs silently forever. Validated
+  end-to-end through `mintk` with an X25519 identity: window opens and closes itself,
+  plaintext lands on tmpfs over `\\wsl.localhost\…` (never NTFS), byte-for-byte intact,
+  scratch and the throwaway `.bat` cleaned up.
 - **Not yet hardware-validated:** a decrypt through `age-plugin-yubikey` against the card
   (the plugin lookup mechanism itself is covered by the opt-in interop test), and the
   interactive walkthrough of `secret init` — its huh prompts can't be driven from a script,
