@@ -131,6 +131,19 @@ fresh tap/sign; useful for tidy-up or before handing a machine off. Prompts for
 confirmation (default No); `-y`/`--yes` skips the prompt for scripts, and is
 required when stdin isn't a terminal. Leaves the `sessions_dir` itself in place.
 
+### `mintk secret …`
+The secret-grant subsystem — cert minting's shape applied to credentials. Subcommands
+`init` / `grant` / `run` / `path` / `list` / `revoke` / `print` / `edit` / `rm` / `pull` /
+`push` / `sweep` (plus a hidden `_reap` the wipers re-exec). `secret init` mirrors
+`mintk init` — interactive, merges into an existing config, autodetects the age/plugin
+binaries (resolving `%USERPROFILE%` under WSL), reads the card's identities and asks which
+**slot** to use, and uses/clones/creates the blob repo. It **never writes to the YubiKey**:
+generating an identity in a retired slot stays a separate, deliberate command. Kept in `mintk` rather than a separate
+binary because it shares the config, path/WSL helpers, git sync and `doctor`; it is
+self-contained in `secret.go` / `secretage.go` / `secretgrant.go`. Configured under a
+`secrets:` block; absent from a cert-only config. Full design, decisions and platform
+quirks: [secrets.md](secrets.md).
+
 ### `mintk deploy <scope> user@host`
 "ssh-copy-id for the CA": enroll a host to trust the CA + accept the scope's principal,
 using the operator's current SSH access to the host. Port the repo's `trust-ca` logic,
@@ -204,7 +217,11 @@ prerequisite checks), `scopes.go` (list/add/delete + huh `edit` loop + git pull/
 `deploy.go` (streams an idempotent trust script over SSH, sudo via `ssh -t`, `-i` bootstrap
 identity, alias resolution via `ssh -G`), `sshconfig.go` (add/edit `Host` blocks; unit-tested in
 `sshconfig_test.go`), `platform.go` (WSL/PKCS#11/path helpers), `prompt.go` (huh helpers).
-`config.example.yaml` ships placeholders; the `Makefile` builds/installs.
+`config.example.yaml` ships placeholders; the `Makefile` builds/installs. The secret-grant
+subsystem adds `secret.go` (command tree, consumption paths, `edit`), `secretage.go` (blob
+repo + the age client's per-OS card-access modes), `secretgrant.go` (tmpfs runtime dir,
+grant records, the independent wiper, `sweep`), `secretinit.go` (`secret init`: read-only
+card queries, binary autodetection, repo setup) and `secret_test.go`.
 
 - **Validated:** the agent (`-U`) path end-to-end on the WSL+Windows setup (mint via the
   YubiKey agent → `ssh` into a host) — `mintk` is in daily use. Plus software-mode
@@ -214,5 +231,26 @@ identity, alias resolution via `ssh -G`), `sshconfig.go` (add/edit `Host` blocks
 - **Not yet hardware-validated:** the token (PKCS#11) path and `deploy` against a live
   host — these need the YubiKey-on-this-machine / a target host in the loop (see
   [prerequisites.md](prerequisites.md)).
+- **Secret grants — validated:** the full lifecycle in `software` mode against a real `age`
+  (grant burst → `list`/`path`/`run` env injection + exit-status passthrough → `revoke` →
+  `edit` create/modify/no-op/empty-refusal → `rm` → git commits), both wiper paths firing
+  with no `mintk` process alive (systemd transient timer and the detached reaper), the
+  sweep of expired grants / orphaned plaintext / a `SIGKILL`ed edit workspace, the signal
+  wipe, and the non-tmpfs refusal plus its opt-out. The Windows-interop plugin lookup that
+  `mode: wsl-windows` depends on is covered by an opt-in test
+  (`MINTK_TEST_WIN_PLUGIN_DIR=<dir> go test -run Interop`), verified here.
+- **The `wsl-windows` pipeline — validated** against the real Windows `age.exe` v1.3.1 run
+  from WSL through interop: `doctor`, encrypt (`secret edit` → armoured blob → git commit)
+  and decrypt (`secret grant` → tmpfs) all end-to-end, with a payload carrying CRLF, a lone
+  CR and NUL bytes coming back **byte-for-byte identical** — the stdin/stdout pipe mangles
+  nothing. Run with an X25519 identity, so the plugin and card are the one piece still
+  unproven from inside `mintk`.
+- **Not yet hardware-validated:** a decrypt through `age-plugin-yubikey` against the card
+  (the plugin lookup mechanism itself is covered by the opt-in interop test), and the
+  interactive walkthrough of `secret init` — its huh prompts can't be driven from a script,
+  the same way `mintk init` and `scopes edit` can't. Its non-interactive guard rails, the
+  `--list`/`--identity` parsers and the Windows binary autodetection (`where.exe` +
+  `%USERPROFILE%` globbing, verified finding a winget-installed `age.exe`) were exercised
+  here.
 - The earlier bash `mint`, its `~/.config/mint/` config, and the `trust-ca` helper have
   been removed.

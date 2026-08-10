@@ -98,6 +98,7 @@ mintk clean                          # (WSL+agent) recover after swapping YubiKe
 mintk clean-keys [-y]                # wipe minted session keys+certs from sessions_dir
 mintk deploy <scope> user@host       # enroll a host to trust the CA + accept the scope
 mintk deploy <scope> host -i <key>   #   ...authenticating to the host with a chosen key
+mintk secret grant <scope> [<ttl>]   # (optional subsystem) grant a credential — see below
 ```
 
 Pass the wrong arguments (or an unknown flag) to any command and `mintk` prints that
@@ -133,6 +134,34 @@ mintk deploy example-host user@host
 It also adds/updates `Host <host>` in your `~/.ssh/config` with `IdentityFile` (the minted
 cert) + `IdentitiesOnly yes`, so `ssh <host>` just works (skip with `--no-ssh-config`).
 The target may be a `~/.ssh/config` alias.
+
+## Secret grants — the same idea, for credentials
+
+An optional sibling subsystem: `mintk secret` applies the tap-once-then-work model to
+*credentials* instead of hosts. Secrets are **age-encrypted blobs, one per scope**, in a
+git repo (so the hosting server can never read them). One tap decrypts a scope onto
+**tmpfs** for a bounded time; an **independent wiper** destroys it at TTL, and the consumer
+reads a file rather than the card.
+
+```
+mintk secret init                             # set it up: mode, age+plugin, slot, repo
+mintk secret grant registry deploy-token 4h   # one tap covers the burst
+mintk secret run registry -- docker push …    # env injection, nothing in scrollback
+mintk secret list                             # what's granted, how long is left
+mintk secret revoke --all
+mintk secret edit registry                    # decrypt → $EDITOR (tmpfs) → encrypt → commit
+```
+
+It cannot reuse the ssh-agent bridge that carries CA signing — the agent protocol only
+signs, it has no decrypt operation — so on Windows+WSL the age client runs on the Windows
+side, where the card is natively reachable, and only plaintext crosses into WSL (no usbipd,
+no pcscd). Because the store is end-to-end encrypted, **per-read auditing is impossible by
+construction**. Grants are Linux/WSL-only for now (they need tmpfs).
+
+Everything — blob repo, scope→blob mapping, TTLs, plugin paths, per-OS card access — is
+config-driven; `mintk secret init` writes that block interactively and can clone or create
+the blob repo for you. Like `mintk init`, it only ever *reads* the YubiKey. See
+[docs/secrets.md](docs/secrets.md).
 
 ## Setting up the CA on a YubiKey
 

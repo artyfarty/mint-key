@@ -87,6 +87,14 @@ out to the Windows ssh-keygen, but it's unreliable for exactly the Cygwin reason
 - **Revocation:** expiry is the primary mechanism; for early revocation use a KRL
   (`ssh-keygen -k`) distributed to hosts, or drop/rotate the CA.
 
+## The sibling subsystem: secret grants
+
+The same idea applied to credentials instead of hosts — one tap authorizes a *scope* for a
+bounded time, after which the consumer reads a file rather than the card. Secrets are age
+blobs in a git repo, so the storage host can never read them. It deliberately does **not**
+reuse the ssh-agent bridge above: that protocol only signs, it cannot decrypt. See
+[secrets.md](secrets.md).
+
 ## Non-targets
 
 - **Hosts that don't speak OpenSSH user certs** (e.g. some appliance SSH stacks, and

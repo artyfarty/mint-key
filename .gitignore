@@ -25,6 +25,14 @@ id_ecdsa*
 .env.*
 secrets.*
 
+# age material — blobs and identities live in the operator's private repo
+*.age
+identity.txt
+recipients.txt
+
+# ...but the docs about them are not secrets
+!docs/secrets.md
+
 # OS / editor cruft
 .DS_Store
 Thumbs.db

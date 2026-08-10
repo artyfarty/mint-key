@@ -90,6 +90,36 @@ ssh <host>                   # the host block uses IdentityFile ~/.ssh/sessions/
 The tap is on **issuance**, once per scope per lifetime — SSH then needs no hardware until
 the cert expires.
 
+## 6. Optional: secret grants
+
+Only if you use the [secret-grant subsystem](secrets.md). It is independent of everything
+above — different payload, different card slot, its own git repo — so skip this whole step
+on a machine that just mints certs.
+
+```sh
+mintk secret init            # interactive: card access mode, age + plugin, slot,
+                             # blob repo (use / clone / create), recipients, TTL
+mintk doctor                 # the secrets section must be green too
+mintk secret list            # the scopes already in your blob repo
+mintk secret grant <scope>   # the tap
+```
+
+`secret init` merges into the config you already wrote in step 2, and only ever **reads**
+the YubiKey. The age identity has to exist in a PIV **retired** slot beforehand — creating
+it is a deliberate step, not something the wizard does to your card:
+
+```sh
+age-plugin-yubikey --generate --slot <1-20> --pin-policy once --touch-policy cached
+```
+
+Prerequisites per platform (`age` + `age-plugin-yubikey` where the card is reachable; on
+Windows+WSL both live on the **Windows** side and run through interop) are in
+[prerequisites.md → Secret grants](prerequisites.md#secret-grants-optional-subsystem--mintk-secret).
+Grants need tmpfs, so they're **Linux/WSL-only** for now.
+
+> **The PIV PIN is applet-wide.** The secrets identity and the CA signing slot share it —
+> three wrong entries block the applet and take cert minting down with it.
+
 ## Per-platform notes
 
 - **Linux / macOS (`token`):** the YubiKey must be plugged into *this* box; minting prompts

@@ -63,3 +63,57 @@ scopes:
   - name: danger
     principal: danger-example
     ttl: 1h
+
+# --- secret grants (optional) -------------------------------------------------
+# The sibling of cert minting for *credentials*: one tap decrypts a scope's
+# age blob to tmpfs for a bounded time. Delete this whole block if you only
+# mint certs. Full explanation: docs/secrets.md.
+secrets:
+  # How the age client reaches the YubiKey (mirrors `mode:` above):
+  #   native       age + age-plugin-yubikey run HERE and talk to the card (pcscd).
+  #   wsl-windows  WSL runs the *Windows* age.exe through interop; the card
+  #                stays on Windows. No usbipd, no pcscd in WSL. RECOMMENDED on WSL.
+  #   software     a plain age X25519 identity file (TESTING ONLY, no hardware).
+  mode: wsl-windows
+
+  # Git repo holding one age blob per scope. It is end-to-end encrypted, so the
+  # hosting server can never read it — but per-read auditing is impossible too.
+  repo: ~/work/mint-secrets
+  dir: secrets
+
+  # age identity file. For the YubiKey plugin this is a *stub* naming the card
+  # and slot — no key material — so it can live on the Windows side.
+  identity: /mnt/c/Users/<you>/.age/identity.txt
+
+  # age binary. Under wsl-windows this is the Windows age.exe; leave empty in
+  # native/software mode to use `age` from PATH.
+  age: /mnt/c/Users/<you>/age-tools/age.exe
+
+  # Directory holding age-plugin-yubikey(.exe). It must be a REAL PATH entry —
+  # age refuses a plugin it resolved through ".".
+  plugin_dir: /mnt/c/Users/<you>/age-tools
+
+  # Who `mintk secret edit` re-encrypts to. Include a break-glass X25519
+  # recipient whose identity is in your offline backup, not only the YubiKey.
+  # recipients:
+  #   - age1yubikeyexampleplaceholderreplacewithyourown
+  #   - age1examplebreakglassplaceholderreplacewithyourown
+  recipients_file: recipients.txt   # relative to `repo`
+
+  # Where granted plaintext lives. Must be real tmpfs (grants have to die on
+  # reboot); empty = $XDG_RUNTIME_DIR/mint-key. Linux/WSL only for now.
+  runtime_dir: ""
+  # allow_non_tmpfs: true   # opt out of the tmpfs requirement — you should not
+
+  default_ttl: 8h
+
+  # Scopes are discovered from the repo (every <name>.age is usable). Entries
+  # here only add policy: lifetime, how `secret run` exposes it, or a
+  # non-default filename. These are placeholders.
+  scopes:
+    - name: example-service
+      ttl: 1h
+      format: env       # env = KEY=VALUE lines injected by `secret run`
+    - name: example-token
+      ttl: 15m
+      format: opaque    # opaque = only the file path is handed to the command

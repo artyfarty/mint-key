@@ -20,6 +20,7 @@ func main() {
 	root.AddCommand(initCmd())
 	root.AddCommand(doctorCmd())
 	root.AddCommand(keyCmd())
+	root.AddCommand(secretCmd())
 	root.AddCommand(scopesCmd())
 	root.AddCommand(cleanCmd())
 	root.AddCommand(cleanKeysCmd())

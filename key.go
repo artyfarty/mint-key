@@ -50,6 +50,46 @@ func normalizeTTL(ttl string) (string, error) {
 	return ttl, nil
 }
 
+// ttlUnits maps the OpenSSH-style relative-time suffixes to durations.
+var ttlUnits = map[byte]time.Duration{
+	's': time.Second,
+	'm': time.Minute,
+	'h': time.Hour,
+	'd': 24 * time.Hour,
+	'w': 7 * 24 * time.Hour,
+}
+
+// parseTTL turns an OpenSSH-style relative time into a Duration. Certs get their
+// expiry enforced by sshd, but a secret grant needs the wall-clock deadline
+// locally so the wiper can be armed for it.
+func parseTTL(ttl string) (time.Duration, error) {
+	norm, err := normalizeTTL(ttl)
+	if err != nil {
+		return 0, err
+	}
+	var total time.Duration
+	num := 0
+	digits := false
+	for i := 0; i < len(norm); i++ {
+		ch := norm[i]
+		if ch >= '0' && ch <= '9' {
+			num = num*10 + int(ch-'0')
+			digits = true
+			continue
+		}
+		unit, ok := ttlUnits[byte(strings.ToLower(string(ch))[0])]
+		if !ok || !digits {
+			return 0, fmt.Errorf("invalid ttl %q", ttl)
+		}
+		total += time.Duration(num) * unit
+		num, digits = 0, false
+	}
+	if digits || total <= 0 {
+		return 0, fmt.Errorf("invalid ttl %q", ttl)
+	}
+	return total, nil
+}
+
 func runKey(scopeName, ttlOverride string) error {
 	cfg, err := loadConfig()
 	if err != nil {

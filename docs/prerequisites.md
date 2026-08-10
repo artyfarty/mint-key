@@ -60,6 +60,36 @@ failures`).
 - **usbipd** (USB passthrough to WSL) works but **detaches the key from Windows** — avoid;
   the agent path keeps the YubiKey usable by Windows.
 
+## Secret grants (optional subsystem — `mintk secret`)
+
+Only needed if you use [secret grants](secrets.md); cert minting doesn't touch any of it.
+
+- **`age`** and **`age-plugin-yubikey`**, installed where the card is reachable:
+  - Linux/macOS (`mode: native`): both on this machine, plus `pcscd` running.
+  - Windows+WSL (`mode: wsl-windows`): both on the **Windows** side, run from WSL through
+    interop (`/proc/sys/fs/binfmt_misc/WSLInterop` enabled). No usbipd, no pcscd in WSL.
+    The plugin's directory must be a real PATH entry — a plugin resolved through `.` is
+    refused by age.
+
+    `age` is packaged: `winget install FiloSottile.age` (the shim lands in
+    `%LOCALAPPDATA%\Microsoft\WinGet\Links`, which is on PATH). **`age-plugin-yubikey`
+    is not** — download the Windows build and unpack it somewhere stable yourself.
+    `mintk secret init` autodetects both (asking Windows via `where.exe`, then the usual
+    install locations) and pre-fills the prompt with the winget path when age isn't
+    installed yet.
+- **An age identity in a PIV retired slot** (`82`–`95`, leaving `9c` to the CA), created
+  with `--pin-policy once --touch-policy cached` so a multi-scope grant costs one tap.
+- **A git repo of age blobs** and the recipients they're encrypted to.
+- **A tmpfs runtime dir** — `$XDG_RUNTIME_DIR` (i.e. `/run/user/<uid>`) by default. Grants
+  are Linux/WSL-only for v1; macOS has no such directory.
+- Optional but recommended: **`systemd --user`**, so TTLs are enforced by transient timers
+  rather than the fallback reaper process.
+
+`mintk doctor` checks all of this when a `secrets:` block is present.
+
+**Careful:** the PIV PIN is applet-wide — the same PIN protects the CA signing slot, so
+three wrong entries block cert minting too.
+
 ## Host side (to accept the certs)
 
 Each target host must trust the CA and accept your scope's principal:

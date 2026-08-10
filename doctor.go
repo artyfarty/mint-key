@@ -86,6 +86,7 @@ func runDoctor() int {
 			dwarn("unknown mode %q in config", cfg.Mode)
 		}
 		checkScopes(cfg)
+		bump(checkSecrets(cfg))
 	}
 
 	dhdr("Result")
@@ -252,6 +253,114 @@ func checkWSLDelegate(cfg *Config) int {
 	if cfg.WinStage == "" {
 		dbad("win_stage not set (Windows-readable staging dir)")
 		fail = 1
+	}
+	return fail
+}
+
+// checkSecrets validates the secret-grant subsystem when it's configured at all;
+// a cert-only setup skips it entirely.
+func checkSecrets(cfg *Config) int {
+	if cfg.Secrets == nil {
+		return 0
+	}
+	s := cfg.Secrets
+	dhdr("Secret grants (mode: %s)", s.Mode)
+	fail := 0
+
+	// The age client + its plugin.
+	client, err := newAgeClient(s)
+	if err != nil {
+		dbad("age client: %s", firstLine(err.Error()))
+		fail = 1
+	} else {
+		if v, verr := client.version(); verr == nil {
+			dok("age: %s (%s)", client.bin, v)
+		} else {
+			dbad("age at %s did not run: %s", client.bin, firstLine(verr.Error()))
+			fail = 1
+		}
+		dok("identity: %s", client.identity)
+		if s.Mode != secretModeSoft {
+			if s.PluginDir == "" {
+				dwarn("plugin_dir not set — age must find age-plugin-yubikey on PATH")
+				dnote("a plugin resolved through '.' is refused; the directory must be a real PATH entry")
+			} else if dirExists(expandPath(s.PluginDir)) {
+				dok("plugin_dir: %s (prepended to the age client's PATH)", expandPath(s.PluginDir))
+			} else {
+				dbad("plugin_dir %s does not exist", expandPath(s.PluginDir))
+				fail = 1
+			}
+		}
+	}
+	if s.Mode == secretModeWSL {
+		if fileExists("/proc/sys/fs/binfmt_misc/WSLInterop") || fileExists("/proc/sys/fs/binfmt_misc/WSLInterop-late") {
+			dok("WSL interop enabled (Windows binaries are runnable — no usbipd, no pcscd needed)")
+		} else {
+			dbad("WSL interop is off — the Windows age.exe can't be executed from here")
+			fail = 1
+		}
+	}
+	if s.Mode == secretModeNative && !inWSL() && fileExists("/proc/version") {
+		if exec.Command("pgrep", "-x", "pcscd").Run() == nil {
+			dok("pcscd running")
+		} else {
+			dwarn("pcscd not running (the plugin needs it to reach the card natively)")
+		}
+	}
+	if s.Mode == secretModeSoft {
+		dwarn("software identity (testing only) — no hardware in the loop")
+	}
+
+	// The blob repo.
+	if s.Repo == "" {
+		dbad("secrets.repo not set (the git repo holding the blobs)")
+		fail = 1
+	} else if dirExists(s.blobDir()) {
+		dok("blobs: %s (%d scope(s))", s.blobDir(), len(s.listSecretScopes()))
+		if isGitRepo(s.repoPath()) {
+			dok("backed by a git repo (use 'mintk secret pull/push')")
+		} else {
+			dwarn("%s is not a git repo — 'mintk secret pull/push' won't work", s.repoPath())
+		}
+	} else {
+		dbad("blob dir %s missing (clone the secrets repo, or 'mintk secret edit <scope>' to start one)", s.blobDir())
+		fail = 1
+	}
+	if _, rerr := s.recipientList(); rerr != nil {
+		dwarn("recipients: %s", firstLine(rerr.Error()))
+		dnote("needed only to write blobs ('secret edit'), not to grant them")
+	} else {
+		recs, _ := s.recipientList()
+		dok("%d recipient(s) configured for re-encryption", len(recs))
+	}
+
+	// Where grants land, and what will destroy them. Resolved without creating
+	// anything — doctor stays read-only.
+	root, err := runtimeDirPath(s)
+	if err != nil {
+		dbad("runtime dir: %s", firstLine(err.Error()))
+		return fail + 1
+	}
+	st := &grantStore{root: root}
+	fs := mountFSType(nearestExistingDir(root))
+	switch {
+	case isEphemeralFS(fs):
+		dok("runtime dir: %s (%s)", root, fs)
+	case s.AllowNonTmpfs:
+		dwarn("runtime dir: %s is on %s, allowed by allow_non_tmpfs", root, fsOrUnknown(fs))
+		dnote("granted plaintext will survive a reboot on disk")
+	default:
+		dbad("runtime dir: %s is on %s, not tmpfs — grants would be refused", root, fsOrUnknown(fs))
+		fail = 1
+	}
+	if _, lerr := exec.LookPath("systemd-run"); lerr == nil {
+		dok("wiper: systemd-run --user transient timers (fallback: a detached reaper)")
+	} else {
+		dwarn("systemd-run absent — TTLs will be enforced by a detached reaper process")
+		dnote("it survives the shell but not a kill -9; 'mintk secret sweep' is the backstop")
+	}
+	if n := len(st.list()); n > 0 {
+		dnote("%d live grant(s) right now", n)
 	}
 	return fail
 }

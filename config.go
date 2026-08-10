@@ -48,8 +48,54 @@ type Config struct {
 
 	Scopes []Scope `yaml:"scopes,omitempty"`
 
+	// secret grants (optional subsystem — absent for cert-only setups)
+	Secrets *SecretsConfig `yaml:"secrets,omitempty"`
+
 	path           string // where this config was loaded from
 	scopesExternal bool   // scopes came from ScopesFile
+}
+
+// SecretScope maps a secret scope name to its blob and its grant policy. Scopes
+// are usually discovered from the blob repo; an entry here only adds policy on
+// top (a non-default filename, lifetime, or consumption format).
+type SecretScope struct {
+	Name   string `yaml:"name"`
+	File   string `yaml:"file,omitempty"`   // blob filename; default "<name>.age"
+	TTL    string `yaml:"ttl,omitempty"`    // default grant lifetime for this scope
+	Format string `yaml:"format,omitempty"` // env | opaque — how `secret run` exposes it
+}
+
+// SecretsConfig configures the secret-grant subsystem: where the age-encrypted
+// blobs live, who they're encrypted to, and how the age client reaches the card.
+type SecretsConfig struct {
+	// Mode selects how the age client reaches the YubiKey — the same
+	// platform/mode split as the CA `mode:`, for the same reason.
+	//   native       age + age-plugin-yubikey run here and talk to the card (pcscd)
+	//   wsl-windows  WSL runs the *Windows* age.exe through interop; the card
+	//                stays on Windows (no usbipd, no pcscd in WSL)
+	//   software     a plain age X25519 identity file — TESTING ONLY, no hardware
+	Mode string `yaml:"mode"`
+
+	// Blob storage: a git repo holding one age blob per scope.
+	Repo string `yaml:"repo"`          // repo root
+	Dir  string `yaml:"dir,omitempty"` // blob subdir inside the repo (default "secrets")
+
+	// Recipients the blobs are (re-)encrypted to on `secret edit`.
+	Recipients     []string `yaml:"recipients,omitempty"`
+	RecipientsFile string   `yaml:"recipients_file,omitempty"` // relative to Repo
+
+	// age client. Identity is the age *identity file* — for the YubiKey plugin
+	// it is a stub naming the card + slot, not key material.
+	Age       string `yaml:"age,omitempty"`        // age binary (age.exe under wsl-windows)
+	PluginDir string `yaml:"plugin_dir,omitempty"` // dir holding age-plugin-yubikey(.exe)
+	Identity  string `yaml:"identity,omitempty"`
+
+	// Grants.
+	RuntimeDir    string `yaml:"runtime_dir,omitempty"`     // tmpfs dir; default $XDG_RUNTIME_DIR/mint-key
+	AllowNonTmpfs bool   `yaml:"allow_non_tmpfs,omitempty"` // opt out of the tmpfs requirement (unsafe)
+	DefaultTTL    string `yaml:"default_ttl,omitempty"`     // default grant lifetime
+
+	Scopes []SecretScope `yaml:"scopes,omitempty"`
 }
 
 // scopesDoc is the on-disk shape of an external scopes file.
@@ -165,6 +211,59 @@ func (c *Config) applyDefaults() {
 	if c.SessionsDir == "" {
 		c.SessionsDir = filepath.Join(home(), ".ssh", "sessions")
 	}
+	c.Secrets.applyDefaults()
+}
+
+// applyDefaults fills in the secret-grant defaults. Safe on a nil receiver — a
+// config without a `secrets:` block simply has the subsystem unconfigured.
+func (s *SecretsConfig) applyDefaults() {
+	if s == nil {
+		return
+	}
+	if s.Mode == "" {
+		// Mirror the CA mode recommendation: under WSL the card is reachable
+		// from Windows, everywhere else the local age client talks to it.
+		if inWSL() {
+			s.Mode = secretModeWSL
+		} else {
+			s.Mode = secretModeNative
+		}
+	}
+	if s.Dir == "" {
+		s.Dir = "secrets"
+	}
+	if s.DefaultTTL == "" {
+		s.DefaultTTL = "8h"
+	}
+	if s.Age == "" && s.Mode != secretModeWSL {
+		s.Age = "age"
+	}
+}
+
+// secretsConfig returns the secret-grant config, or an error explaining that the
+// subsystem isn't set up yet.
+func (c *Config) secretsConfig() (*SecretsConfig, error) {
+	if c.Secrets == nil {
+		return nil, fmt.Errorf("no `secrets:` block in %s\n"+
+			"  see config.example.yaml and docs/secrets.md to set up secret grants", c.path)
+	}
+	return c.Secrets, nil
+}
+
+// repoPath is the expanded blob-repo root.
+func (s *SecretsConfig) repoPath() string { return expandPath(s.Repo) }
+
+// blobDir is the expanded directory holding one age blob per scope.
+func (s *SecretsConfig) blobDir() string { return filepath.Join(s.repoPath(), s.Dir) }
+
+// scope looks up the declared policy for a secret scope.
+func (s *SecretsConfig) scope(name string) (*SecretScope, bool) {
+	for i := range s.Scopes {
+		if s.Scopes[i].Name == name {
+			return &s.Scopes[i], true
+		}
+	}
+	return nil, false
 }
 
 // sessionsDir returns the expanded throwaway-key directory.
