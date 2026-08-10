@@ -71,6 +71,15 @@ signing mode, **import the CA public key** (autodetect — inserted YubiKey via
 to `~/.config/mint-key/ca.pub`, and optionally set `scopes_file` (cloning the scopes git
 repo if given a URL). Refuses to clobber an existing config without `--force`.
 
+### `mintk interactive` (`mintk i`)
+Menu-driven front end over the commands below, for the day-to-day loop: **mint a cert**
+(pick a scope → lifetime), **grant a secret** (pick a scope → lifetime, or create a new one
+via `secret edit`), and **clean up** (wipe `sessions_dir`, revoke live grants). Every entry
+shows what is currently live and how long it has left — a minted cert's remaining time is
+read back from `ssh-keygen -L`, a grant's from its record. The config is reloaded on each
+pass, so something created in one action shows up in the next. The secret entries are
+simply absent when no `secrets:` block is configured. Needs a terminal.
+
 ### `mintk doctor`
 Read-only prerequisite check (replaces the old `install.sh check`): OpenSSH tools +
 version (`-U` needs ≥7.6), the CA public key (+ fingerprint), and the pieces the

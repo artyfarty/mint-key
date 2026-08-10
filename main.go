@@ -17,6 +17,7 @@ func main() {
 		SilenceErrors: true,
 	}
 
+	root.AddCommand(interactiveCmd())
 	root.AddCommand(initCmd())
 	root.AddCommand(doctorCmd())
 	root.AddCommand(keyCmd())

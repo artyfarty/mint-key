@@ -1,0 +1,292 @@
+package main
+
+import (
+	"fmt"
+	"os/exec"
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/spf13/cobra"
+)
+
+func interactiveCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:     "interactive",
+		Aliases: []string{"i"},
+		Short:   "Menu-driven mintk: mint a cert, grant a secret, clean up",
+		Long: `One menu for the things you do day to day, so nothing has to be remembered:
+mint a cert for a scope, grant a secret (or create a new one), and clear out
+what's been minted. Every entry shows what is currently live and how long it has
+left, so the menu doubles as the answer to "what do I have right now?".
+
+Everything here is the same code the individual commands run.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runInteractive()
+		},
+	}
+}
+
+func runInteractive() error {
+	if !isInteractive() {
+		return fmt.Errorf("`interactive` needs a terminal")
+	}
+	for {
+		// Reloaded every pass: a scope added or a secret created in the previous
+		// action has to show up without restarting.
+		cfg, err := loadConfig()
+		if err != nil {
+			return err
+		}
+		// Missing/unconfigured secrets are not an error here — plenty of setups
+		// only mint certs. The entry is simply not offered.
+		sess, secErr := openSecrets()
+
+		type action struct {
+			label string
+			run   func() error
+		}
+		var actions []action
+
+		actions = append(actions, action{
+			label: fmt.Sprintf("Mint a cert          %s", certSummaryLine(cfg)),
+			run:   func() error { return interactiveMint(cfg) },
+		})
+		if secErr == nil {
+			actions = append(actions, action{
+				label: fmt.Sprintf("Grant a secret       %s", grantSummaryLine(sess)),
+				run:   func() error { return interactiveGrant(sess) },
+			})
+		}
+		actions = append(actions, action{
+			label: "Clean up             wipe minted identities / revoke grants",
+			run:   func() error { return interactiveCleanup(cfg, sess, secErr) },
+		})
+
+		opts := make([]string, 0, len(actions)+1)
+		for _, a := range actions {
+			opts = append(opts, a.label)
+		}
+		quit := len(opts)
+		opts = append(opts, "[x] Quit")
+
+		idx, err := promptChoice(prog, opts)
+		if err != nil || idx == quit {
+			return nil // Esc / Ctrl-C / Quit
+		}
+		if err := actions[idx].run(); err != nil {
+			// A failed action shouldn't drop you out of the menu.
+			fmt.Printf("%s: %s\n", prog, err)
+		}
+	}
+}
+
+// --- mint a cert -------------------------------------------------------------
+
+func certSummaryLine(cfg *Config) string {
+	if len(cfg.Scopes) == 0 {
+		return "(no scopes configured)"
+	}
+	live := 0
+	for _, s := range cfg.Scopes {
+		if _, ok := certRemaining(cfg, s.Name); ok {
+			live++
+		}
+	}
+	return fmt.Sprintf("%d scope(s), %d live", len(cfg.Scopes), live)
+}
+
+func interactiveMint(cfg *Config) error {
+	if len(cfg.Scopes) == 0 {
+		return fmt.Errorf("no scopes configured — add one with `%s scopes add` or `%s scopes edit`", prog, prog)
+	}
+	var opts []string
+	for _, s := range cfg.Scopes {
+		state := "—"
+		if d, ok := certRemaining(cfg, s.Name); ok {
+			state = "live " + shortDuration(d)
+		}
+		opts = append(opts, fmt.Sprintf("%-18s principal=%-18s ttl=%-6s %s", s.Name, s.Principal, s.TTL, state))
+	}
+	back := len(opts)
+	opts = append(opts, "[<] Back")
+
+	idx, err := promptChoice("Mint a cert — pick a scope", opts)
+	if err != nil || idx == back {
+		return nil
+	}
+	sc := cfg.Scopes[idx]
+	ttl, err := promptTTL(fmt.Sprintf("Lifetime for %s", sc.Name), sc.TTL)
+	if err != nil || ttl == "" {
+		return nil
+	}
+	return runKey(sc.Name, ttl)
+}
+
+// certRemaining reports how long the cert already minted for a scope is still
+// valid. Best-effort: no cert, an unparsable one or an expired one all read as
+// "not live".
+func certRemaining(cfg *Config, scope string) (time.Duration, bool) {
+	path := fmt.Sprintf("%s/%s-cert.pub", cfg.sessionsDir(), scope)
+	if !fileExists(path) {
+		return 0, false
+	}
+	out, err := exec.Command("ssh-keygen", "-L", "-f", path).Output()
+	if err != nil {
+		return 0, false
+	}
+	until, ok := parseCertValidTo(string(out))
+	if !ok {
+		return 0, false
+	}
+	d := time.Until(until)
+	if d <= 0 {
+		return 0, false
+	}
+	return d, true
+}
+
+// certValidRe matches ssh-keygen -L's validity line:
+//
+//	Valid: from 2026-08-10T22:00:00 to 2026-08-11T06:00:00
+var certValidRe = regexp.MustCompile(`Valid: from \S+ to (\S+)`)
+
+// parseCertValidTo extracts the expiry from `ssh-keygen -L` output. A cert with
+// no expiry ("forever") reports none — this is only used to show a countdown.
+func parseCertValidTo(out string) (time.Time, bool) {
+	m := certValidRe.FindStringSubmatch(out)
+	if m == nil {
+		return time.Time{}, false
+	}
+	t, err := time.ParseInLocation("2006-01-02T15:04:05", m[1], time.Local)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return t, true
+}
+
+// --- grant a secret ----------------------------------------------------------
+
+func grantSummaryLine(sess *secretSession) string {
+	scopes := sess.sec.listSecretScopes()
+	if len(scopes) == 0 {
+		return "(no secrets yet)"
+	}
+	live := 0
+	for _, n := range scopes {
+		if _, ok := sess.st.live(n); ok {
+			live++
+		}
+	}
+	return fmt.Sprintf("%d secret(s), %d granted", len(scopes), live)
+}
+
+func interactiveGrant(sess *secretSession) error {
+	scopes := sess.sec.listSecretScopes()
+	var opts []string
+	for _, n := range scopes {
+		state := "—"
+		if g, ok := sess.st.live(n); ok {
+			state = "granted " + shortDuration(g.remaining())
+		}
+		opts = append(opts, fmt.Sprintf("%-18s ttl=%-6s %-7s %s",
+			n, sess.sec.scopeTTL(n), sess.sec.scopeFormat(n), state))
+	}
+	add := len(opts)
+	opts = append(opts, "[+] Add a new secret")
+	back := len(opts)
+	opts = append(opts, "[<] Back")
+
+	idx, err := promptChoice("Grant a secret — pick a scope", opts)
+	if err != nil || idx == back {
+		return nil
+	}
+	if idx == add {
+		name, err := promptString("Name for the new secret", "")
+		if err != nil {
+			return nil
+		}
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return nil
+		}
+		if err := validScopeName(name); err != nil {
+			return err
+		}
+		// `edit` creates it: $EDITOR on tmpfs, then encrypt + commit.
+		return runSecretEdit(name, false, false)
+	}
+
+	name := scopes[idx]
+	ttl, err := promptTTL(fmt.Sprintf("Lifetime for %s", name), sess.sec.scopeTTL(name))
+	if err != nil || ttl == "" {
+		return nil
+	}
+	return runSecretGrant([]string{name}, ttl)
+}
+
+// --- clean up ----------------------------------------------------------------
+
+func interactiveCleanup(cfg *Config, sess *secretSession, secErr error) error {
+	type item struct {
+		label string
+		run   func() error
+	}
+	items := []item{{
+		label: "Wipe minted identities (session keys + certs)",
+		run:   func() error { return runCleanKeys(cfg, false) },
+	}}
+	if secErr == nil {
+		items = append(items, item{
+			label: fmt.Sprintf("Revoke all secret grants (%d live)", len(sess.st.list())),
+			run: func() error {
+				grants := sess.st.list()
+				if len(grants) == 0 {
+					fmt.Printf("%s: no live grants\n", prog)
+					return nil
+				}
+				for _, g := range grants {
+					sess.st.wipe(g.Scope, "")
+					fmt.Printf("%s: revoked %s\n", prog, g.Scope)
+				}
+				return nil
+			},
+		})
+	}
+
+	var opts []string
+	for _, it := range items {
+		opts = append(opts, it.label)
+	}
+	back := len(opts)
+	opts = append(opts, "[<] Back")
+
+	idx, err := promptChoice("Clean up", opts)
+	if err != nil || idx == back {
+		return nil
+	}
+	return items[idx].run()
+}
+
+// --- shared ------------------------------------------------------------------
+
+// promptTTL asks for a lifetime and re-asks until it parses. Returns "" if the
+// prompt was cancelled.
+func promptTTL(label, def string) (string, error) {
+	for {
+		v, err := promptString(label+" (e.g. 8h, 30m, 1d)", def)
+		if err != nil {
+			return "", err
+		}
+		v = strings.TrimSpace(v)
+		if v == "" {
+			return "", nil
+		}
+		if _, err := normalizeTTL(v); err != nil {
+			fmt.Printf("%s: %s\n", prog, err)
+			continue
+		}
+		return v, nil
+	}
+}
