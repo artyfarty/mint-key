@@ -150,6 +150,7 @@ mintk secret list                                     # scopes + which are grant
 mintk secret revoke <scope>... | --all                # wipe now
 mintk secret print <scope> [-y]                       # escape hatch
 mintk secret edit <scope> [--push]                    # decrypt → $EDITOR → encrypt → commit
+mintk secret reencrypt <scope>... | --all             # apply a changed recipient list
 mintk secret rm <scope> [-y] [--push]
 mintk secret pull | push                              # git sync the blob repo
 mintk secret sweep                                    # wipe expired/orphaned/abandoned
@@ -237,14 +238,45 @@ without being declared. A `scopes:` entry only adds policy (lifetime, consumptio
 non-default filename). That way the catalogue travels with the (private) repo instead of
 having to be mirrored into every machine's config.
 
-The `identity` file is an age **plugin stub**: it names the card and slot, and contains no
-key material. Keeping it on the Windows side under `wsl-windows` is fine and avoids path
-translation entirely.
+## Recipients vs. identity — who *can* read, and what *does* the reading
 
-Recipients should include a **break-glass X25519 recipient** whose identity is in your
-offline backup, not only the YubiKey. A YubiKey plugin recipient means every re-encryption
-needs the plugin binary present (though not the card); losing the only card that can
-decrypt means losing every blob.
+Two different things, and the distinction decides whether you can still read your secrets
+after losing a key:
+
+| | What it is | Role |
+| --- | --- | --- |
+| **recipient** | a **public** key (`age1…` / `age1yubikey1…`) | **who will be able to decrypt** a blob. Fixed when the blob is written |
+| **identity** | the private side; for the plugin, a **stub** naming a card + slot | **what this machine decrypts with** right now |
+
+Encrypting generates a random file key, encrypts the content with it, and puts **one
+wrapped copy of that file key per recipient** into the blob header. Any single matching
+identity opens it. So a blob readable by three keys carries three wrapped copies — and
+`age1yubikey1…` recipients cost nothing to add: encryption needs the plugin binary but
+**no card, no PIN and no touch**.
+
+Two consequences that drive the whole workflow:
+
+- **The list is baked in at write time.** Adding a recipient does not open blobs that
+  already exist, and removing one does not close them. Run **`mintk secret reencrypt --all`**
+  after any change to the list — that costs one card interaction per blob (one tap for the
+  burst) and is the only thing that actually applies it.
+- **The identity file has to cover every card you want to decrypt with.** A stub names one
+  specific card and slot; with only one stub, mintk can decrypt with that card alone even
+  if the others are on the recipient list. Append each card's `age-plugin-yubikey --identity`
+  output to the identity file — age tries each in turn.
+
+**Several YubiKeys are *not* interchangeable here.** Cards that carry the same *CA* key
+(imported onto each, so `mintk key` works with any of them) still have **different age
+identities**: a plugin identity is generated **on the card** and never leaves it, so it
+cannot be copied to a second card the way a CA key can. Three cards means three recipients
+and three stubs.
+
+Keep a **break-glass X25519 recipient** on the list too, with its identity in your offline
+backup. If every card that can read a blob is lost or broken, the blob is gone — no amount
+of tooling recovers it.
+
+The `identity` file itself is not key material: it just names cards and slots. Keeping it
+on the Windows side under `wsl-windows` is fine and avoids path translation entirely.
 
 ## Creating the age identity on the card
 
@@ -284,6 +316,9 @@ wiring.
 - **`cmd /k` leaves a console alive** after the command. Any interactive window has to exit
   by itself — no `pause`.
 - **A touch is required per decrypt**, served from the 15 s cache. Hence bursts.
+- **Multiple YubiKeys are not interchangeable.** Unlike a CA key, which is imported onto
+  every card, an age identity is generated *on* a card and can never leave it. Each card
+  is its own recipient and needs its own stub in the identity file.
 - **PIN longevity is not reliable and must not be depended on.** Measured: still valid at
   ~6 min, gone at ~7 — but force-killed processes in between plausibly reset the card
   session, and the two causes were never separated. The design sidesteps the question by

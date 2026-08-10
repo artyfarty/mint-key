@@ -39,6 +39,7 @@ Per-read auditing is impossible by construction — see docs/secrets.md.`,
 	cmd.AddCommand(secretRevokeCmd())
 	cmd.AddCommand(secretPrintCmd())
 	cmd.AddCommand(secretEditCmd())
+	cmd.AddCommand(secretReencryptCmd())
 	cmd.AddCommand(secretRmCmd())
 	cmd.AddCommand(secretPullCmd())
 	cmd.AddCommand(secretPushCmd())
@@ -656,6 +657,99 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+func secretReencryptCmd() *cobra.Command {
+	var all bool
+	var push bool
+	cmd := &cobra.Command{
+		Use:   "reencrypt [<scope>...]",
+		Short: "Re-encrypt blobs to the current recipient list (after adding/removing a key)",
+		Long: `The recipient list is baked into a blob when it is written, so changing
+recipients does NOT change who can read what already exists — those blobs still
+carry the old set. This rewrites them: decrypt with a key that is already on the
+blob, re-encrypt to the configured recipients, commit.
+
+Run it after adding a YubiKey (or a break-glass recipient) to the list, and after
+removing one — until you do, a removed key still opens every existing blob.
+The plaintext is unchanged, so live grants are left alone.
+
+Costs one card interaction per blob, served from the touch cache in a burst.`,
+		Args: cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runSecretReencrypt(args, all, push)
+		},
+	}
+	cmd.Flags().BoolVar(&all, "all", false, "re-encrypt every scope in the repo")
+	cmd.Flags().BoolVar(&push, "push", false, "git push after committing")
+	return cmd
+}
+
+func runSecretReencrypt(names []string, all, push bool) error {
+	sess, err := openSecrets()
+	if err != nil {
+		return err
+	}
+	if all {
+		names = sess.sec.listSecretScopes()
+	}
+	if len(names) == 0 {
+		return fmt.Errorf("name a scope, or pass --all")
+	}
+	recipients, err := sess.sec.recipientList()
+	if err != nil {
+		return err
+	}
+	client, err := newAgeClient(sess.sec)
+	if err != nil {
+		return err
+	}
+
+	// Resolve every blob before touching the card, as `grant` does.
+	paths := make([]string, 0, len(names))
+	for _, name := range names {
+		p, err := sess.sec.blobPath(name)
+		if err != nil {
+			return err
+		}
+		if !fileExists(p) {
+			return fmt.Errorf("no blob for %q at %s", name, p)
+		}
+		paths = append(paths, p)
+	}
+
+	fmt.Printf("%s: re-encrypting %d blob(s) to %d recipient(s)\n", prog, len(paths), len(recipients))
+	for i, name := range names {
+		blob, err := os.ReadFile(paths[i])
+		if err != nil {
+			return err
+		}
+		fmt.Printf("%s: %s  [YubiKey — PIN if needed + touch]\n", prog, name)
+		plain, err := client.decrypt(blob)
+		if err != nil {
+			printPINWarning()
+			return err
+		}
+		ct, err := client.encrypt(plain, recipients)
+		if err != nil {
+			return err
+		}
+		if err := writeFileAtomic(paths[i], ct, 0o600); err != nil {
+			return err
+		}
+		if err := sess.commitBlob(paths[i], fmt.Sprintf("mintk: re-encrypt secret %s", name), false); err != nil {
+			return err
+		}
+	}
+	if push {
+		dir, err := sess.gitDir()
+		if err != nil {
+			return err
+		}
+		fmt.Printf("%s: git push in %s\n", prog, dir)
+		return run("git", "-C", dir, "push")
+	}
+	return nil
 }
 
 func secretRmCmd() *cobra.Command {

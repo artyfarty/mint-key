@@ -133,8 +133,8 @@ required when stdin isn't a terminal. Leaves the `sessions_dir` itself in place.
 
 ### `mintk secret …`
 The secret-grant subsystem — cert minting's shape applied to credentials. Subcommands
-`init` / `grant` / `run` / `path` / `list` / `revoke` / `print` / `edit` / `rm` / `pull` /
-`push` / `sweep` (plus a hidden `_reap` the wipers re-exec). `secret init` mirrors
+`init` / `grant` / `run` / `path` / `list` / `revoke` / `print` / `edit` / `reencrypt` /
+`rm` / `pull` / `push` / `sweep` (plus a hidden `_reap` the wipers re-exec). `secret init` mirrors
 `mintk init` — interactive, merges into an existing config, autodetects the age/plugin
 binaries (resolving `%USERPROFILE%` under WSL), reads the card's identities and asks which
 **slot** to use, and uses/clones/creates the blob repo. It **never writes to the YubiKey**:
