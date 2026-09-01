@@ -16,6 +16,11 @@ export GOTOOLCHAIN
 
 GOFILES := $(wildcard *.go)
 
+# Elevate only when the install dir (or its parent, if it doesn't exist yet)
+# isn't writable — so `make PREFIX=~/.local install` never asks for a password.
+# Override with `make SUDO= install` to never elevate.
+SUDO ?= $(shell test -w "$(BINDIR)" || test -w "$(dir $(BINDIR))" || echo sudo)
+
 .PHONY: all build install uninstall test vet fmt fmt-check check clean help
 
 all: build
@@ -27,12 +32,12 @@ $(BIN): $(GOFILES) go.mod go.sum
 	$(GO) build -o $(BIN) .
 
 install: build
-	install -d $(BINDIR)
-	install -m 0755 $(BIN) $(BINDIR)/$(BIN)
+	$(SUDO) install -d $(BINDIR)
+	$(SUDO) install -m 0755 $(BIN) $(BINDIR)/$(BIN)
 	@echo "installed $(BINDIR)/$(BIN)"
 
 uninstall:
-	rm -f $(BINDIR)/$(BIN)
+	$(SUDO) rm -f $(BINDIR)/$(BIN)
 	@echo "removed $(BINDIR)/$(BIN)"
 
 test:
@@ -58,4 +63,4 @@ clean:
 
 help:
 	@echo "targets: build (default), install, uninstall, test, vet, fmt, fmt-check, check, clean"
-	@echo "vars:    PREFIX (default /usr/local; installs to \$$(PREFIX)/bin), DESTDIR, GO, GOTOOLCHAIN"
+	@echo "vars:    PREFIX (default /usr/local; installs to \$$(PREFIX)/bin), DESTDIR, GO, GOTOOLCHAIN, SUDO"
