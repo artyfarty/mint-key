@@ -112,9 +112,28 @@ stays free for `sudo`'s prompt.
 **Routers excluded:** RouterOS doesn't accept OpenSSH user certs — those stay on their
 own key/password model.
 
+### The login name you type is not necessarily `%u`
+
+`AuthorizedPrincipalsFile /etc/ssh/auth_principals/%u` expands `%u` to the account's
+**canonical** passwd name (`getpwnam()`'s `pw_name`) — not to the name you happened to
+type. Where the directory service accepts aliases, the two differ, and the file has to be
+named after the canonical one or sshd reads a path that doesn't exist:
+
+```
+debug1: trying authorized principals file /etc/ssh/auth_principals/<canonical>
+Certificate does not contain an authorized principal
+```
+
+macOS is where this bites: an account carries several OpenDirectory `RecordName`s (the
+short name plus an Apple-ID-derived one), so `ssh someothername@host` authenticates fine
+while `pw_name` stays the short name. `mintk deploy` resolves the target with `id -un`
+before writing the principals file and says so when the two differ. Symptom if you hit it
+by hand: the client offers the cert, the server never explains why, and you fall back to a
+password prompt.
+
 ### Host-side quirks (macOS targets)
 
-Verified against macOS 15.7 (Sequoia):
+Verified against macOS 15.7 (Sequoia), OpenSSH 9.9p2:
 
 - **Nothing to reload.** `sshd` is *launchd socket-activated*: there is no listener
   process (`pgrep sshd` finds nothing — connections show up as `sshd-session`), and every
@@ -132,6 +151,18 @@ Verified against macOS 15.7 (Sequoia):
   if `TrustedUserCAKeys`/`AuthorizedPrincipalsFile` didn't take.
 - Remote Login must be on (System Settings → General → Sharing), and the login user must
   be an admin (for `sudo`).
+
+### Keep `ca.pub` to exactly one line
+
+sshd's key-file parser **stops at the first line it can't read**, so every CA listed after
+a junk line silently stops being trusted. Junk gets into a `ca.pub` easily — a captured
+command's output can carry a terminal-title escape, a paste can bring blank lines — and
+`deploy` used to copy the file verbatim onto every host. It now sends only the first line
+that actually parses as a public key, scrubs unparsable lines out of the host's CA store,
+and `mintk doctor` warns when the local `ca.pub` holds more than the key.
+
+To inspect one: `awk '{print NR": "length($0)}' ~/.config/mint-key/ca.pub` (expect a
+single line), and `sed -n 2p ca.pub | cat -v` to make any escape sequence visible.
 
 ## Quick verification
 

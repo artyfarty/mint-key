@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -137,6 +138,52 @@ func expandPath(p string) string {
 		return filepath.Join(home(), p[2:])
 	}
 	return p
+}
+
+// firstPubKeyLine returns the first line of `data` that actually parses as an
+// SSH public key, with control characters stripped; blank lines, comments and
+// junk are skipped. Whatever produced a ca.pub (a captured command's output, a
+// paste, an editor) can leave garbage in it — a terminal title escape has been
+// seen in the wild — and shipping that to a host's TrustedUserCAKeys is worse
+// than cosmetic: sshd's key-file parser gives up at the first unparsable line,
+// so anything listed after it stops being trusted.
+func firstPubKeyLine(data string) (string, error) {
+	for _, raw := range strings.Split(data, "\n") {
+		line := strings.TrimSpace(stripControl(raw))
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		f := strings.Fields(line)
+		if len(f) < 2 || !looksLikeKeyType(f[0]) {
+			continue
+		}
+		if _, err := base64.StdEncoding.DecodeString(f[1]); err != nil {
+			continue
+		}
+		return line, nil
+	}
+	return "", fmt.Errorf("no SSH public key line found")
+}
+
+// stripControl drops ASCII control characters, which is what escape sequences
+// that sneak into a key file are made of.
+func stripControl(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, s)
+}
+
+// looksLikeKeyType reports whether tok is a plausible SSH public key algorithm.
+func looksLikeKeyType(tok string) bool {
+	for _, p := range []string{"ssh-", "ecdsa-sha2-", "sk-ssh-", "sk-ecdsa-", "rsa-sha2-"} {
+		if strings.HasPrefix(tok, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // loadConfig reads and validates the config file.

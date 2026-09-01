@@ -61,15 +61,22 @@ func runDeploy(cfg *Config, scopeName, target string, editSSHConfig bool, identi
 	if caPub == "" || !fileExists(caPub) {
 		return fmt.Errorf("set ca_pub to your CA public key")
 	}
-	caLine, err := os.ReadFile(caPub)
+	caData, err := os.ReadFile(caPub)
 	if err != nil {
 		return err
+	}
+	caLine, err := firstPubKeyLine(string(caData))
+	if err != nil {
+		return fmt.Errorf("%s: %w", caPub, err)
+	}
+	if caLine != strings.TrimSpace(string(caData)) {
+		fmt.Printf("%s: note — %s holds more than the key line; only the key is sent\n", prog, caPub)
 	}
 
 	user, hostname := resolveSSHTarget(target)
 	fmt.Printf("%s: target %q → login user %q, host %q\n", prog, target, user, hostname)
 
-	script := buildTrustScript(strings.TrimSpace(string(caLine)), user, sc.Principal)
+	script := buildTrustScript(caLine, user, sc.Principal)
 
 	// Auth options for the (single) ssh invocation. With -i we also force
 	// IdentitiesOnly so the explicit key is the only one offered; with --password
@@ -139,6 +146,19 @@ func buildTrustScript(caLine, user, principal string) string {
 if [ "$(id -u)" != 0 ]; then echo "trust: must run as root" >&2; exit 1; fi
 id "$user" >/dev/null 2>&1 || { echo "trust: login user '$user' does not exist" >&2; exit 1; }
 
+# The name you SSH as is not necessarily the account's canonical passwd name:
+# it can be an alias that the directory service resolves (macOS accounts carry
+# several RecordNames — the Apple-ID-derived one logs in fine while pw_name
+# stays the short name). sshd expands AuthorizedPrincipalsFile's %u to the
+# *canonical* name, so the principals file has to be named after that, not
+# after whatever was typed on the command line. "id -un" resolves it the same
+# way getpwnam() does.
+canon=$(id -un "$user" 2>/dev/null || true)
+if [ -n "$canon" ] && [ "$canon" != "$user" ]; then
+  echo "trust: '$user' is an alias for account '$canon' — sshd expands %u to '$canon'"
+  user=$canon
+fi
+
 ca_store=/etc/ssh/trusted-user-ca-keys.pub
 sshd_config=/etc/ssh/sshd_config
 princ_dir=/etc/ssh/auth_principals
@@ -146,6 +166,20 @@ ca_body=$(printf '%s\n' "$ca_line" | awk '{print $2}')
 
 # 1) add the CA pubkey (dedup by key body)
 touch "$ca_store"; chmod 644 "$ca_store"
+
+# 1a) scrub any line that is neither a key nor a comment. sshd's key-file
+# parser stops at the first line it can't read, silently un-trusting every CA
+# listed below it — so one stray escape sequence from a mangled ca.pub takes
+# the whole file down.
+bad=$(awk '!/^[[:space:]]*$/ && !/^[[:space:]]*#/ && $1 !~ /^(ssh-|ecdsa-sha2-|sk-|rsa-sha2-)/ {n++} END {print n+0}' "$ca_store")
+if [ "$bad" -gt 0 ]; then
+  tmp=$(mktemp) || { echo "trust: mktemp failed" >&2; exit 1; }
+  awk '/^[[:space:]]*$/ || /^[[:space:]]*#/ || $1 ~ /^(ssh-|ecdsa-sha2-|sk-|rsa-sha2-)/' "$ca_store" > "$tmp"
+  cat "$tmp" > "$ca_store"
+  rm -f "$tmp"
+  echo "trust: removed $bad malformed line(s) from $ca_store"
+fi
+
 if ! grep -qF "$ca_body" "$ca_store" 2>/dev/null; then
   printf '%s\n' "$ca_line" >> "$ca_store"
   echo "trust: added CA to $ca_store"

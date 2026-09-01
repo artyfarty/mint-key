@@ -77,7 +77,11 @@ func runInit(force bool) error {
 		}
 		cfg.CAKey = ck
 		// Derive ca_pub if the key already exists (deploy needs the public key).
-		if pub, derr := runOut("ssh-keygen", "-y", "-f", expandPath(ck)); derr == nil && pub != "" {
+		pub, derr := runOut("ssh-keygen", "-y", "-f", expandPath(ck))
+		if derr == nil {
+			pub, derr = firstPubKeyLine(pub)
+		}
+		if derr == nil {
 			caDest := filepath.Join(configDir(), "ca.pub")
 			_ = os.MkdirAll(configDir(), 0o755)
 			if werr := os.WriteFile(caDest, []byte(pub+"\n"), 0o644); werr == nil {
@@ -92,11 +96,18 @@ func runInit(force bool) error {
 		if err != nil {
 			return err
 		}
+		// Keep only the key line: whatever we imported from (a command's
+		// output, a paste, a file) can carry blank lines or escape sequences,
+		// and those break sshd's parser once they reach a host's CA store.
+		capub, err = firstPubKeyLine(capub)
+		if err != nil {
+			return fmt.Errorf("CA public key: %w", err)
+		}
 		caDest := filepath.Join(configDir(), "ca.pub")
 		if err := os.MkdirAll(configDir(), 0o755); err != nil {
 			return err
 		}
-		if err := os.WriteFile(caDest, []byte(strings.TrimRight(capub, "\n")+"\n"), 0o644); err != nil {
+		if err := os.WriteFile(caDest, []byte(capub+"\n"), 0o644); err != nil {
 			return err
 		}
 		cfg.CAPub = "~/.config/mint-key/ca.pub"

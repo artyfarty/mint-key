@@ -154,6 +154,19 @@ func checkCAPresence(cfg *Config) int {
 		if fp, err := runOut("ssh-keygen", "-lf", p); err == nil {
 			dnote("%s", fp)
 		}
+		// A ca.pub holding anything besides the key line is a real hazard: sshd
+		// stops parsing a CA store at the first line it can't read, so junk
+		// pushed by `deploy` can silently un-trust the CA on a host.
+		if data, err := os.ReadFile(p); err == nil {
+			line, lerr := firstPubKeyLine(string(data))
+			switch {
+			case lerr != nil:
+				dbad("%s holds no usable public key line", p)
+				return 1
+			case line != strings.TrimSpace(string(data)):
+				dwarn("%s holds more than the key line (stray/blank lines) — deploy sends only the key; rewrite it to be safe", p)
+			}
+		}
 		return 0
 	}
 	dbad("ca.pub not found at %s", p)

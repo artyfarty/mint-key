@@ -178,6 +178,15 @@ Extra behaviour (implemented):
   `-o PubkeyAuthentication=no -o PreferredAuthentications=keyboard-interactive,password`,
   so a fresh host can be enrolled with just the account password — no key has to be
   installed by hand first. Mutually exclusive with `-i` (password wins).
+- **Canonical login user:** the principal is written to
+  `auth_principals/$(id -un <user>)`, not `auth_principals/<user-as-typed>` — sshd
+  expands `%u` to the account's `pw_name`, which differs from the name you SSH as
+  wherever the directory service accepts aliases (macOS `RecordName`s). The script says
+  so when it resolves one.
+- **CA key hygiene:** only the first line of `ca_pub` that parses as a public key is
+  sent (`firstPubKeyLine`, shared with `init`/`doctor`), and the script scrubs
+  unparsable lines out of the host's CA store — sshd abandons a key file at the first
+  bad line, un-trusting everything below it.
 - **Portable host script:** POSIX-safe and non-fatal where it can be. No `sed -i` (BSD
   sed would eat the `-E`); the reload is best-effort and skipped entirely on Darwin,
   where sshd is launchd-activated (see
@@ -249,13 +258,15 @@ card queries, binary autodetection, repo setup) and `secret_test.go`.
   end-to-end (scopes CRUD → `key` signs → `ssh-keygen -L` shows the right
   principal/validity), ttl validation, unknown-scope errors, `clean` WSL gating, the
   `~/.ssh/config` editor (`go test`), `go vet`/`gofmt` clean.
-- **`deploy` against a live host — partially validated:** run against a fresh macOS 15.7
-  target. The CA store, `sshd_config` directives and `auth_principals` entry all landed
-  correctly; the run then aborted in the reload step (`kill -HUP ""`, no sshd PID on
-  launchd-activated macOS), which also skipped the `~/.ssh/config` wiring. Fixed: reload
-  is Darwin-aware and never fatal, `sed -i` is gone, and the single-connection here-doc
-  transport was verified on that host. A clean end-to-end re-run (with `sudo` typed at
-  the prompt) is still pending.
+- **`deploy` against a live host — validated on macOS 15.7 (OpenSSH 9.9p2):** the run
+  completes and writes the CA store, the `sshd_config` directives, the `auth_principals`
+  entry and the `~/.ssh/config` block. Three bugs came out of that first live target and
+  are fixed: the reload aborting the run (`kill -HUP ""` — no sshd PID under launchd),
+  `sed -i` (BSD sed eats the `-E`), and the principal being written under the typed
+  login name instead of the canonical `pw_name` (which made the cert be offered and
+  refused with *"Certificate does not contain an authorized principal"*). Diagnosed with
+  a throwaway `sshd -ddd` on a high port — the fastest way to get a reason out of macOS,
+  whose unified log doesn't carry sshd's auth messages.
 - **Not yet hardware-validated:** the token (PKCS#11) path — needs the
   YubiKey-on-this-machine in the loop (see [prerequisites.md](prerequisites.md)).
 - **Secret grants — validated:** the full lifecycle in `software` mode against a real `age`
