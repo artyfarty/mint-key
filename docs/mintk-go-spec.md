@@ -258,10 +258,10 @@ card queries, binary autodetection, repo setup) and `secret_test.go`.
   end-to-end (scopes CRUD → `key` signs → `ssh-keygen -L` shows the right
   principal/validity), ttl validation, unknown-scope errors, `clean` WSL gating, the
   `~/.ssh/config` editor (`go test`), `go vet`/`gofmt` clean.
-- **`deploy` against a live host — validated on macOS 15.7 (OpenSSH 9.9p2):** the run
-  completes and writes the CA store, the `sshd_config` directives, the `auth_principals`
-  entry and the `~/.ssh/config` block. Three bugs came out of that first live target and
-  are fixed: the reload aborting the run (`kill -HUP ""` — no sshd PID under launchd),
+- **`deploy` against a live host — validated end-to-end on macOS 15.7 (OpenSSH 9.9p2):**
+  the run writes the CA store, the `sshd_config` directives, the `auth_principals` entry
+  and the `~/.ssh/config` block, and `ssh <host>` then logs in on the cert with no
+  password. Three bugs came out of that first live target and are fixed: the reload aborting the run (`kill -HUP ""` — no sshd PID under launchd),
   `sed -i` (BSD sed eats the `-E`), and the principal being written under the typed
   login name instead of the canonical `pw_name` (which made the cert be offered and
   refused with *"Certificate does not contain an authorized principal"*). Diagnosed with
