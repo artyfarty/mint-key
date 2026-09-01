@@ -13,6 +13,7 @@ import (
 func deployCmd() *cobra.Command {
 	var noSSHConfig bool
 	var identity string
+	var password bool
 	cmd := &cobra.Command{
 		Use:   "deploy <scope> <user@host|alias>",
 		Short: "Enroll a host to trust the CA and accept the scope's principal (ssh-copy-id for the CA)",
@@ -20,12 +21,16 @@ func deployCmd() *cobra.Command {
   - append ca_pub to /etc/ssh/trusted-user-ca-keys.pub (dedup'd)
   - ensure sshd_config has TrustedUserCAKeys + AuthorizedPrincipalsFile
   - append the scope's principal to /etc/ssh/auth_principals/<login-user>
-  - sshd -t, then reload sshd
+  - sshd -t, then reload sshd (a no-op on macOS: launchd re-reads the config
+    per connection, so there is no daemon to signal)
 The target may be a full user@host or a ~/.ssh/config alias (resolved via
-ssh -G). sudo can prompt for a password interactively (a PTY is allocated).
-Use -i/--identity to pick the key you authenticate to the target with (passed
-straight to ssh -i), e.g. when the cert isn't deployed yet and you need a
-password/bootstrap key.
+ssh -G). Everything runs over a single SSH connection, so you are asked to
+authenticate exactly once (one password, or one YubiKey tap); sudo then prompts
+on the allocated PTY.
+Bootstrapping a host you have no key on: --password authenticates with the
+account password (public-key auth is turned off for that connection), so no key
+needs to be installed by hand first. Use -i/--identity instead to pick a
+specific key (passed straight to ssh -i).
 Then, unless --no-ssh-config, ~/.ssh/config is updated so "ssh <target>" uses
 the minted cert (IdentityFile = the scope's session key, IdentitiesOnly yes).
 Idempotent; reports what changed.`,
@@ -35,17 +40,19 @@ Idempotent; reports what changed.`,
 			if err != nil {
 				return err
 			}
-			return runDeploy(cfg, args[0], args[1], !noSSHConfig, identity)
+			return runDeploy(cfg, args[0], args[1], !noSSHConfig, identity, password)
 		},
 	}
 	cmd.Flags().BoolVar(&noSSHConfig, "no-ssh-config", false,
 		"Don't add/edit the host in ~/.ssh/config")
 	cmd.Flags().StringVarP(&identity, "identity", "i", "",
 		"SSH identity file to authenticate to the target (ssh -i)")
+	cmd.Flags().BoolVar(&password, "password", false,
+		"Authenticate to the target with a password instead of a key (bootstrap a fresh host)")
 	return cmd
 }
 
-func runDeploy(cfg *Config, scopeName, target string, editSSHConfig bool, identity string) error {
+func runDeploy(cfg *Config, scopeName, target string, editSSHConfig bool, identity string, password bool) error {
 	sc, ok := cfg.scope(scopeName)
 	if !ok {
 		return fmt.Errorf("unknown scope %q (try: %s scopes list)", scopeName, prog)
@@ -64,33 +71,29 @@ func runDeploy(cfg *Config, scopeName, target string, editSSHConfig bool, identi
 
 	script := buildTrustScript(strings.TrimSpace(string(caLine)), user, sc.Principal)
 
-	// Identity options prepended to every ssh invocation. With -i we also force
-	// IdentitiesOnly so the explicit key is the only one offered.
-	idOpts := []string{}
-	if identity != "" {
-		idOpts = append(idOpts, "-i", expandPath(identity), "-o", "IdentitiesOnly=yes")
-	}
-	sshArgs := func(extra ...string) []string {
-		return append(append([]string{}, idOpts...), extra...)
-	}
-
-	// 1) stream the script to a temp file on the host (plain user, no sudo).
-	remotePath := "/tmp/mintk-trust.sh"
-	stage := exec.Command("ssh", sshArgs(target, "cat > "+remotePath+" && chmod 700 "+remotePath)...)
-	stage.Stdin = strings.NewReader(script)
-	stage.Stdout = os.Stdout
-	stage.Stderr = os.Stderr
-	if err := stage.Run(); err != nil {
-		return fmt.Errorf("stage script on %s: %w", target, err)
+	// Auth options for the (single) ssh invocation. With -i we also force
+	// IdentitiesOnly so the explicit key is the only one offered; with --password
+	// we turn public-key auth off entirely so a fresh host needs no key at all.
+	var authOpts []string
+	switch {
+	case password:
+		authOpts = append(authOpts,
+			"-o", "PubkeyAuthentication=no",
+			"-o", "PreferredAuthentications=keyboard-interactive,password")
+	case identity != "":
+		authOpts = append(authOpts, "-i", expandPath(identity), "-o", "IdentitiesOnly=yes")
 	}
 
-	// 2) run it under sudo over a PTY session so sudo can prompt for a password
-	//    interactively. The script is read from the file (not stdin), leaving the
-	//    terminal free for the password prompt.
+	// One connection does the whole job: the script travels inside the remote
+	// command as a quoted here-doc (not over stdin), so the PTY stays free for
+	// sudo's password prompt and you authenticate only once.
 	fmt.Printf("%s: enrolling %s on %s (principal=%s) — sudo may prompt for a password...\n",
 		prog, scopeName, target, sc.Principal)
-	apply := exec.Command("ssh", sshArgs("-t", target,
-		"sudo bash "+remotePath+"; rc=$?; rm -f "+remotePath+"; exit $rc")...)
+	remote := "umask 077\ncat > " + remoteScriptPath + " <<'MINTK_TRUST_EOF'\n" +
+		script + "MINTK_TRUST_EOF\n" +
+		"sudo bash " + remoteScriptPath + "; rc=$?; rm -f " + remoteScriptPath + "; exit $rc\n"
+
+	apply := exec.Command("ssh", append(append([]string{}, authOpts...), "-t", target, remote)...)
 	apply.Stdin = os.Stdin
 	apply.Stdout = os.Stdout
 	apply.Stderr = os.Stderr
@@ -114,6 +117,10 @@ func runDeploy(cfg *Config, scopeName, target string, editSSHConfig bool, identi
 	}
 	return nil
 }
+
+// remoteScriptPath is where the enrollment script lands on the target; it is
+// removed again as soon as sudo is done with it.
+const remoteScriptPath = "/tmp/mintk-trust.sh"
 
 // sshConfigPath returns ~/.ssh/config.
 func sshConfigPath() string {
@@ -146,11 +153,16 @@ else
   echo "trust: CA already trusted in $ca_store"
 fi
 
-# 2) ensure sshd_config directives
+# 2) ensure sshd_config directives.
+# NB: no "sed -i" — BSD/macOS sed would eat the next argument as the backup
+# suffix. Rewrite through a temp file and copy back, keeping mode and owner.
 ensure_directive() {
-  local key=$1 val=$2
+  key=$1; val=$2
   if grep -Eq "^[[:space:]]*${key}[[:space:]]" "$sshd_config"; then
-    sed -i -E "s|^[[:space:]]*${key}[[:space:]].*|${key} ${val}|" "$sshd_config"
+    tmp=$(mktemp) || { echo "trust: mktemp failed" >&2; return 1; }
+    sed -E "s|^[[:space:]]*${key}[[:space:]].*|${key} ${val}|" "$sshd_config" > "$tmp"
+    cat "$tmp" > "$sshd_config"
+    rm -f "$tmp"
   else
     printf '%s %s\n' "$key" "$val" >> "$sshd_config"
   fi
@@ -168,12 +180,40 @@ else
   echo "trust: $user already accepts principal '$principal'"
 fi
 
-# 4) validate + reload
+# 4) validate
 sshd -t || { echo "trust: sshd config validation failed — NOT reloading" >&2; exit 1; }
-if   command -v systemctl >/dev/null 2>&1; then systemctl reload ssh 2>/dev/null || systemctl reload sshd
-elif command -v service   >/dev/null 2>&1; then service ssh reload 2>/dev/null || service sshd reload
-else kill -HUP "$(cat /var/run/sshd.pid 2>/dev/null || pgrep -o sshd)"; fi
-echo "trust: sshd reloaded — done"
+
+# 5) check the directives actually took effect (an earlier Include/drop-in or a
+#    Match block can shadow what we just wrote).
+eff=$(sshd -T 2>/dev/null | tr 'A-Z' 'a-z' || true)
+if [ -n "$eff" ]; then
+  printf '%s\n' "$eff" | grep -q "^trustedusercakeys $ca_store$" \
+    || echo "trust: WARNING — effective TrustedUserCAKeys is not $ca_store; check Include/Match blocks in $sshd_config" >&2
+  printf '%s\n' "$eff" | grep -q "^authorizedprincipalsfile $princ_dir/" \
+    || echo "trust: WARNING — effective AuthorizedPrincipalsFile is not $princ_dir/%u; check Include/Match blocks in $sshd_config" >&2
+fi
+
+# 6) reload. Never fatal: the config on disk is already correct, and a host we
+#    could not signal simply picks it up on its next sshd start.
+if [ "$(uname -s)" = Darwin ]; then
+  # launchd socket-activates sshd per connection, so each new connection reads
+  # the config afresh — there is nothing to reload.
+  echo "trust: macOS — sshd is launchd-activated, config applies to new connections"
+elif command -v systemctl >/dev/null 2>&1; then
+  systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null \
+    || echo "trust: WARNING — could not reload sshd; restart it to apply" >&2
+elif command -v rc-service >/dev/null 2>&1; then
+  rc-service sshd reload 2>/dev/null \
+    || echo "trust: WARNING — could not reload sshd; restart it to apply" >&2
+elif command -v service >/dev/null 2>&1; then
+  service ssh reload 2>/dev/null || service sshd reload 2>/dev/null \
+    || echo "trust: WARNING — could not reload sshd; restart it to apply" >&2
+else
+  pid=$(cat /var/run/sshd.pid 2>/dev/null || pgrep -o sshd 2>/dev/null || true)
+  if [ -n "$pid" ]; then kill -HUP "$pid"
+  else echo "trust: WARNING — no sshd process found to signal; config applies on next start" >&2; fi
+fi
+echo "trust: done"
 `)
 	return b.String()
 }

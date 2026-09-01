@@ -149,7 +149,8 @@ then re-plug the card you want.
 
 A new client only *mints* certs. For a target host to *accept* them it must trust the CA
 and list your scope's principal — `mintk deploy <scope> user@host` does this over SSH
-(streams `ca.pub` + a small enrollment script; needs sudo on the host). Details and the
-manual form: [prerequisites.md → Host side](prerequisites.md#host-side-to-accept-the-certs).
+(streams `ca.pub` + a small enrollment script; needs sudo on the host). Add `--password`
+to enroll a host you have no key on yet. Details, macOS quirks and the manual form:
+[prerequisites.md → Host side](prerequisites.md#host-side-to-accept-the-certs).
 Routers (RouterOS) don't accept OpenSSH user certs — they stay on their own key/password
 model.

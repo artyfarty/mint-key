@@ -102,8 +102,36 @@ plus the scope's `principal` in `/etc/ssh/auth_principals/<login-user>`, then re
 `mintk deploy <scope> user@host` does this over SSH (streams the CA pubkey + a small
 enrollment script; sudo on the host).
 
+**Bootstrapping a host with no key on it:** `mintk deploy <scope> user@host --password`
+authenticates with the account password (`PubkeyAuthentication=no` for that one
+connection), so you don't have to `ssh-copy-id` a key by hand first. The whole enrollment
+travels on a single SSH connection — the script is passed inside the remote command as a
+quoted here-doc rather than over stdin — so you authenticate exactly once and the PTY
+stays free for `sudo`'s prompt.
+
 **Routers excluded:** RouterOS doesn't accept OpenSSH user certs — those stay on their
 own key/password model.
+
+### Host-side quirks (macOS targets)
+
+Verified against macOS 15.7 (Sequoia):
+
+- **Nothing to reload.** `sshd` is *launchd socket-activated*: there is no listener
+  process (`pgrep sshd` finds nothing — connections show up as `sshd-session`), and every
+  new connection re-reads the config. `systemctl`/`service` don't exist either, so the
+  enrollment script skips the reload on Darwin instead of trying to `kill -HUP` a PID
+  that isn't there. (A `kill -HUP ""` under `set -e` is exactly what used to abort the
+  deploy after the config had already been written.)
+- **BSD `sed`.** `sed -i -E …` on macOS consumes `-E` as the backup suffix. The script
+  never uses `sed -i`; it rewrites through `mktemp` and copies back, which also preserves
+  the file's mode and owner.
+- **`Include /etc/ssh/sshd_config.d/*` comes first.** macOS ships that include near the
+  top of `sshd_config` (with a `100-macos.conf` drop-in), and sshd takes the *first*
+  value of most keywords — a drop-in could shadow the directives appended at the bottom.
+  The script therefore verifies the *effective* config with `sshd -T` afterwards and warns
+  if `TrustedUserCAKeys`/`AuthorizedPrincipalsFile` didn't take.
+- Remote Login must be on (System Settings → General → Sharing), and the login user must
+  be an admin (for `sudo`).
 
 ## Quick verification
 

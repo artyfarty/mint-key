@@ -169,17 +169,29 @@ Extra behaviour (implemented):
 - **Alias-aware target:** `user@host` *or* a `~/.ssh/config` alias — resolved via
   `ssh -G <target>` to the effective login user + hostname (the login user is what the
   principal is appended to in `auth_principals/`).
-- **Interactive sudo:** the enroll step runs over `ssh -t` (a PTY), so `sudo` can prompt
-  for a password on the terminal; the script is read from a staged file, not stdin, so
-  the prompt isn't consumed.
+- **One connection, one authentication:** the whole enrollment is a single `ssh -t`
+  (a PTY, so `sudo` can prompt). The script rides *inside* the remote command as a
+  quoted here-doc — not over stdin — so the terminal stays free for the prompt and the
+  operator authenticates exactly once (one password, or one YubiKey tap) instead of once
+  per connection.
+- **Password bootstrap:** `--password` connects with
+  `-o PubkeyAuthentication=no -o PreferredAuthentications=keyboard-interactive,password`,
+  so a fresh host can be enrolled with just the account password — no key has to be
+  installed by hand first. Mutually exclusive with `-i` (password wins).
+- **Portable host script:** POSIX-safe and non-fatal where it can be. No `sed -i` (BSD
+  sed would eat the `-E`); the reload is best-effort and skipped entirely on Darwin,
+  where sshd is launchd-activated (see
+  [prerequisites.md → Host-side quirks](prerequisites.md#host-side-quirks-macos-targets));
+  after `sshd -t` it re-checks the *effective* config with `sshd -T` and warns if an
+  `Include`/`Match` block shadowed the directives.
 - **~/.ssh/config wiring:** unless `--no-ssh-config`, add/edit `Host <alias>` with
   `IdentityFile <sessions_dir>/<scope>` + `IdentitiesOnly yes` so `ssh <alias>` uses the
   minted cert and nothing else. Idempotent; existing `HostName`/`User`/other directives
   in the block are preserved.
 - **Bootstrap identity:** `-i`/`--identity <file>` is passed straight to the `ssh`
-  invocations that connect to the target (`ssh -i <file> -o IdentitiesOnly=yes`), for
-  authenticating with a chosen key — e.g. a password/bootstrap key when the cert isn't
-  trusted yet. It affects only the enrollment connection, not the staged trust script.
+  invocation that connects to the target (`ssh -i <file> -o IdentitiesOnly=yes`), for
+  authenticating with a chosen key — e.g. a bootstrap key when the cert isn't trusted
+  yet. It affects only the enrollment connection, not the trust script.
 
 ### CLI behaviour (all commands)
 When a command is invoked with the wrong number/shape of positional arguments or an
@@ -223,8 +235,8 @@ load/save), `init.go` (`mintk init` bootstrap + CA import), `key.go` (all four s
 modes + agent fingerprint check + agent-refused hint), `doctor.go` (`mintk doctor`
 prerequisite checks), `scopes.go` (list/add/delete + huh `edit` loop + git pull/push),
 `clean.go`, `cleankeys.go` (`mintk clean-keys` — wipe `sessions_dir` with confirm/`-y`),
-`deploy.go` (streams an idempotent trust script over SSH, sudo via `ssh -t`, `-i` bootstrap
-identity, alias resolution via `ssh -G`), `sshconfig.go` (add/edit `Host` blocks; unit-tested in
+`deploy.go` (ships an idempotent trust script over one `ssh -t` connection as a here-doc,
+`-i`/`--password` bootstrap auth, alias resolution via `ssh -G`), `sshconfig.go` (add/edit `Host` blocks; unit-tested in
 `sshconfig_test.go`), `platform.go` (WSL/PKCS#11/path helpers), `prompt.go` (huh helpers).
 `config.example.yaml` ships placeholders; the `Makefile` builds/installs. The secret-grant
 subsystem adds `secret.go` (command tree, consumption paths, `edit`), `secretage.go` (blob
@@ -237,9 +249,15 @@ card queries, binary autodetection, repo setup) and `secret_test.go`.
   end-to-end (scopes CRUD → `key` signs → `ssh-keygen -L` shows the right
   principal/validity), ttl validation, unknown-scope errors, `clean` WSL gating, the
   `~/.ssh/config` editor (`go test`), `go vet`/`gofmt` clean.
-- **Not yet hardware-validated:** the token (PKCS#11) path and `deploy` against a live
-  host — these need the YubiKey-on-this-machine / a target host in the loop (see
-  [prerequisites.md](prerequisites.md)).
+- **`deploy` against a live host — partially validated:** run against a fresh macOS 15.7
+  target. The CA store, `sshd_config` directives and `auth_principals` entry all landed
+  correctly; the run then aborted in the reload step (`kill -HUP ""`, no sshd PID on
+  launchd-activated macOS), which also skipped the `~/.ssh/config` wiring. Fixed: reload
+  is Darwin-aware and never fatal, `sed -i` is gone, and the single-connection here-doc
+  transport was verified on that host. A clean end-to-end re-run (with `sudo` typed at
+  the prompt) is still pending.
+- **Not yet hardware-validated:** the token (PKCS#11) path — needs the
+  YubiKey-on-this-machine in the loop (see [prerequisites.md](prerequisites.md)).
 - **Secret grants — validated:** the full lifecycle in `software` mode against a real `age`
   (grant burst → `list`/`path`/`run` env injection + exit-status passthrough → `revoke` →
   `edit` create/modify/no-op/empty-refusal → `rm` → git commits), both wiper paths firing

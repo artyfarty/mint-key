@@ -99,6 +99,7 @@ mintk clean                          # (WSL+agent) recover after swapping YubiKe
 mintk clean-keys [-y]                # wipe minted session keys+certs from sessions_dir
 mintk deploy <scope> user@host       # enroll a host to trust the CA + accept the scope
 mintk deploy <scope> host -i <key>   #   ...authenticating to the host with a chosen key
+mintk deploy <scope> host --password #   ...with the account password (no key installed yet)
 mintk secret grant <scope> [<ttl>]   # (optional subsystem) grant a credential — see below
 ```
 
@@ -131,6 +132,11 @@ keys and adds the scope's principal to the login user's `AuthorizedPrincipalsFil
 ```
 mintk deploy example-host user@host
 ```
+
+On a brand-new host you have no key on yet, add `--password`: the connection authenticates
+with the account password (public-key auth off), so there's nothing to install by hand
+first. Everything runs over a **single** SSH connection, so you authenticate once — one
+password, or one tap — and `sudo` then prompts on the same session.
 
 It also adds/updates `Host <host>` in your `~/.ssh/config` with `IdentityFile` (the minted
 cert) + `IdentitiesOnly yes`, so `ssh <host>` just works (skip with `--no-ssh-config`).
