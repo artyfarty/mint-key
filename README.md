@@ -87,7 +87,7 @@ an existing config (use `--force` to recreate).
 ## Usage
 
 ```
-mintk interactive | mintk i          # menu: mint a cert, grant a secret, clean up
+mintk interactive | mintk i          # menu: mint, grant a secret, manage scopes, clean up
 mintk init                           # bootstrap config (import CA from the YubiKey)
 mintk doctor                         # check prerequisites are in place
 mintk key <scope> [<ttl>]            # issue/refresh a cert for <scope> into the agent

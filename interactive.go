@@ -14,11 +14,12 @@ func interactiveCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:     "interactive",
 		Aliases: []string{"i"},
-		Short:   "Menu-driven mintk: mint a cert, grant a secret, clean up",
+		Short:   "Menu-driven mintk: mint a cert, grant a secret, manage scopes, clean up",
 		Long: `One menu for the things you do day to day, so nothing has to be remembered:
-mint a cert for a scope, grant a secret (or create a new one), and clear out
-what's been minted. Every entry shows what is currently live and how long it has
-left, so the menu doubles as the answer to "what do I have right now?".
+mint a cert for a scope, grant a secret (or create a new one), manage the scope
+list, and clear out what's been minted. Every entry shows what is currently live
+and how long it has left, so the menu doubles as the answer to "what do I have
+right now?".
 
 Everything here is the same code the individual commands run.`,
 		Args: cobra.NoArgs,
@@ -32,6 +33,9 @@ func runInteractive() error {
 	if !isInteractive() {
 		return fmt.Errorf("`interactive` needs a terminal")
 	}
+	// Name the tab while the menu owns it — with several terminals open it's
+	// otherwise guesswork which one is waiting on a YubiKey tap.
+	defer pushTermTitle(prog + " i")()
 	for {
 		// Reloaded every pass: a scope added or a secret created in the previous
 		// action has to show up without restarting.
@@ -59,6 +63,10 @@ func runInteractive() error {
 				run:   func() error { return interactiveGrant(sess) },
 			})
 		}
+		actions = append(actions, action{
+			label: fmt.Sprintf("Manage scopes        %s", scopesSummaryLine(cfg)),
+			run:   func() error { return interactiveScopes(cfg) },
+		})
 		actions = append(actions, action{
 			label: "Clean up             wipe minted identities / revoke grants",
 			run:   func() error { return interactiveCleanup(cfg, sess, secErr) },
@@ -99,7 +107,7 @@ func certSummaryLine(cfg *Config) string {
 
 func interactiveMint(cfg *Config) error {
 	if len(cfg.Scopes) == 0 {
-		return fmt.Errorf("no scopes configured — add one with `%s scopes add` or `%s scopes edit`", prog, prog)
+		return fmt.Errorf("no scopes configured — add one from the \"Manage scopes\" entry")
 	}
 	var opts []string
 	for _, s := range cfg.Scopes {
@@ -224,6 +232,111 @@ func interactiveGrant(sess *secretSession) error {
 		return nil
 	}
 	return runSecretGrant([]string{name}, ttl)
+}
+
+// --- manage scopes -----------------------------------------------------------
+
+func scopesSummaryLine(cfg *Config) string {
+	return fmt.Sprintf("%d configured — add one, or change its default mint time", len(cfg.Scopes))
+}
+
+// interactiveScopes is the scope editor reachable from the main menu. Unlike
+// `scopes edit`, every change is written out as it's made rather than on exit:
+// the main loop reloads the config on the next pass, so unsaved state here would
+// silently be thrown away.
+func interactiveScopes(cfg *Config) error {
+	for {
+		var opts []string
+		for _, s := range cfg.Scopes {
+			opts = append(opts, formatScopeLine(s))
+		}
+		add := len(opts)
+		opts = append(opts, "[+] Add a new scope")
+		back := len(opts)
+		opts = append(opts, "[<] Back")
+
+		idx, err := promptChoice("Scopes", opts)
+		if err != nil || idx == back {
+			return nil
+		}
+		if idx == add {
+			err = interactiveScopeAdd(cfg)
+		} else {
+			err = interactiveScopeTTL(cfg, &cfg.Scopes[idx])
+		}
+		if err != nil {
+			// Same rule as the main menu: a rejected name or a failed write
+			// shouldn't throw you out of the scope list.
+			fmt.Printf("%s: %s\n", prog, err)
+		}
+	}
+}
+
+func interactiveScopeAdd(cfg *Config) error {
+	name, err := promptString("New scope name", "")
+	if err != nil {
+		return nil
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
+	// The name becomes a filename under sessions_dir, so it gets the same
+	// constraints as a secret scope.
+	if err := validScopeName(name); err != nil {
+		return err
+	}
+	if _, exists := cfg.scope(name); exists {
+		return fmt.Errorf("scope %q already exists", name)
+	}
+	principal, err := promptString("Principal (what target hosts must list)", name)
+	if err != nil {
+		return nil
+	}
+	principal = strings.TrimSpace(principal)
+	if principal == "" {
+		return nil
+	}
+	ttl, err := promptTTL("Default mint time", "8h")
+	if err != nil || ttl == "" {
+		return nil
+	}
+	cfg.Scopes = append(cfg.Scopes, Scope{Name: name, Principal: principal, TTL: ttl})
+	sortScopes(cfg)
+	if err := cfg.saveScopes(); err != nil {
+		return err
+	}
+	fmt.Printf("%s: added scope %s → principal=%s ttl=%s (saved %s)\n",
+		prog, name, principal, ttl, cfg.scopesDest())
+	return nil
+}
+
+// interactiveScopeTTL is the per-scope submenu. Changing the default mint time
+// is the only action for now; principal edits and deletion stay in
+// `mintk scopes edit`, where they're less likely to be hit by accident.
+func interactiveScopeTTL(cfg *Config, s *Scope) error {
+	for {
+		opts := []string{
+			fmt.Sprintf("Default mint time: %s", s.TTL),
+			"[<] Back",
+		}
+		idx, err := promptChoice(formatScopeLine(*s), opts)
+		if err != nil || idx != 0 {
+			return nil
+		}
+		ttl, err := promptTTL(fmt.Sprintf("Default mint time for %s", s.Name), s.TTL)
+		if err != nil {
+			return nil
+		}
+		if ttl == "" || ttl == s.TTL {
+			continue
+		}
+		s.TTL = ttl
+		if err := cfg.saveScopes(); err != nil {
+			return err
+		}
+		fmt.Printf("%s: %s ttl=%s (saved %s)\n", prog, s.Name, ttl, cfg.scopesDest())
+	}
 }
 
 // --- clean up ----------------------------------------------------------------

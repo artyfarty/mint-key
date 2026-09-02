@@ -74,11 +74,24 @@ repo if given a URL). Refuses to clobber an existing config without `--force`.
 ### `mintk interactive` (`mintk i`)
 Menu-driven front end over the commands below, for the day-to-day loop: **mint a cert**
 (pick a scope → lifetime), **grant a secret** (pick a scope → lifetime, or create a new one
-via `secret edit`), and **clean up** (wipe `sessions_dir`, revoke live grants). Every entry
-shows what is currently live and how long it has left — a minted cert's remaining time is
-read back from `ssh-keygen -L`, a grant's from its record. The config is reloaded on each
-pass, so something created in one action shows up in the next. The secret entries are
-simply absent when no `secrets:` block is configured. Needs a terminal.
+via `secret edit`), **manage scopes** (add a scope, or change a scope's default mint time),
+and **clean up** (wipe `sessions_dir`, revoke live grants). Every entry shows what is
+currently live and how long it has left — a minted cert's remaining time is read back from
+`ssh-keygen -L`, a grant's from its record. The config is reloaded on each pass, so
+something created in one action shows up in the next. The secret entries are simply absent
+when no `secrets:` block is configured. Needs a terminal.
+
+Scope management here is deliberately narrower than `scopes edit`: adding a scope (name →
+principal → default mint time) and retuning an existing scope's default mint time are the
+day-to-day operations; changing a principal or deleting a scope stays in `scopes edit`.
+Because the menu reloads the config on every pass, changes are written to the scopes file
+(or the config) **as they're made**, not accumulated until exit.
+
+While the menu is up it renames the terminal tab to `mintk i` — with several terminals
+open, otherwise it's guesswork which one is waiting on a YubiKey tap. The previous title is
+saved on the terminal's title stack (xterm `CSI 22;0t`) and popped on exit; terminals that
+don't implement the stack ignore both sequences, and nothing is emitted when stdout isn't a
+terminal or `TERM` is `dumb`.
 
 ### `mintk doctor`
 Read-only prerequisite check (replaces the old `install.sh check`): OpenSSH tools +
@@ -295,5 +308,11 @@ card queries, binary autodetection, repo setup) and `secret_test.go`.
   `--list`/`--identity` parsers and the Windows binary autodetection (`where.exe` +
   `%USERPROFILE%` globbing, verified finding a winget-installed `age.exe`) were exercised
   here.
+- **huh menus can't be driven from a pipe at all** — worth knowing before trying: under
+  `script -qc … < keys`, bubbletea first queries the terminal (`OSC 11` background colour,
+  `CSI 6n` cursor position) and blocks forever waiting for replies no fake pty sends, so the
+  menu never even renders. That's why the `interactive` code keeps its testable logic
+  (summary lines, `ssh-keygen -L` parsing) in plain functions with unit tests, and the
+  prompt flows are exercised by hand.
 - The earlier bash `mint`, its `~/.config/mint/` config, and the `trust-ca` helper have
   been removed.

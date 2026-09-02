@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/charmbracelet/huh"
@@ -10,6 +11,22 @@ import (
 // isInteractive returns true if stdin is a terminal.
 func isInteractive() bool {
 	return term.IsTerminal(int(os.Stdin.Fd()))
+}
+
+// pushTermTitle sets the terminal window/tab title, saving the previous one on
+// the terminal's title stack (xterm CSI 22;0t — honoured by xterm, VTE, iTerm2,
+// kitty, Windows Terminal; silently ignored elsewhere). The returned function
+// pops it back. No-op when stdout isn't a terminal, so piped output stays clean.
+func pushTermTitle(title string) func() {
+	if !term.IsTerminal(int(os.Stdout.Fd())) {
+		return func() {}
+	}
+	if t := os.Getenv("TERM"); t == "" || t == "dumb" {
+		return func() {}
+	}
+	// Save, then OSC 0 (icon name + window title, the pane title under tmux).
+	fmt.Fprintf(os.Stdout, "\033[22;0t\033]0;%s\a", title)
+	return func() { fmt.Fprint(os.Stdout, "\033[23;0t") }
 }
 
 // promptChoice shows a select list and returns the 0-based index.

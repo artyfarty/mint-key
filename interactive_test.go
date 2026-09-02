@@ -60,4 +60,7 @@ func TestCertSummaryLine(t *testing.T) {
 	if got := certSummaryLine(cfg); got != "2 scope(s), 0 live" {
 		t.Errorf("certSummaryLine = %q, want \"2 scope(s), 0 live\"", got)
 	}
+	if want := "2 configured — add one, or change its default mint time"; scopesSummaryLine(cfg) != want {
+		t.Errorf("scopesSummaryLine = %q, want %q", scopesSummaryLine(cfg), want)
+	}
 }
