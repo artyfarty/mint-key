@@ -109,19 +109,14 @@ func interactiveMint(cfg *Config) error {
 	if len(cfg.Scopes) == 0 {
 		return fmt.Errorf("no scopes configured — add one from the \"Manage scopes\" entry")
 	}
-	var opts []string
-	for _, s := range cfg.Scopes {
+	idx, ok := pickScopeInTree(cfg, "Mint a cert — pick a scope", func(s Scope) string {
 		state := "—"
 		if d, ok := certRemaining(cfg, s.Name); ok {
 			state = "live " + shortDuration(d)
 		}
-		opts = append(opts, fmt.Sprintf("%-18s principal=%-18s ttl=%-6s %s", s.Name, s.Principal, s.TTL, state))
-	}
-	back := len(opts)
-	opts = append(opts, "[<] Back")
-
-	idx, err := promptChoice("Mint a cert — pick a scope", opts)
-	if err != nil || idx == back {
+		return fmt.Sprintf("%-18s principal=%-18s ttl=%-6s %s", s.Name, s.Principal, s.TTL, state)
+	})
+	if !ok {
 		return nil
 	}
 	sc := cfg.Scopes[idx]
@@ -237,32 +232,44 @@ func interactiveGrant(sess *secretSession) error {
 // --- manage scopes -----------------------------------------------------------
 
 func scopesSummaryLine(cfg *Config) string {
+	if n := len(cfg.allGroups()); n > 0 {
+		return fmt.Sprintf("%d in %d group(s) — add, regroup, or change default mint time", len(cfg.Scopes), n)
+	}
 	return fmt.Sprintf("%d configured — add one, or change its default mint time", len(cfg.Scopes))
 }
 
-// interactiveScopes is the scope editor reachable from the main menu. Unlike
-// `scopes edit`, every change is written out as it's made rather than on exit:
-// the main loop reloads the config on the next pass, so unsaved state here would
-// silently be thrown away.
+// interactiveScopes is the scope editor reachable from the main menu. It walks
+// the group tree: a group row descends into it, and additions land wherever you
+// currently are. Unlike `scopes edit`, every change is written out as it's made
+// rather than on exit: the main loop reloads the config on the next pass, so
+// unsaved state here would silently be thrown away.
 func interactiveScopes(cfg *Config) error {
+	cur := ""
 	for {
-		var opts []string
-		for _, s := range cfg.Scopes {
-			opts = append(opts, formatScopeLine(s))
-		}
-		add := len(opts)
-		opts = append(opts, "[+] Add a new scope")
-		back := len(opts)
-		opts = append(opts, "[<] Back")
+		m := buildScopeManageMenu(cfg, cur)
 
-		idx, err := promptChoice("Scopes", opts)
-		if err != nil || idx == back {
+		idx, err := promptChoice(treeTitle("Scopes", cur), m.rows)
+		if err != nil {
 			return nil
 		}
-		if idx == add {
-			err = interactiveScopeAdd(cfg)
-		} else {
-			err = interactiveScopeTTL(cfg, &cfg.Scopes[idx])
+		switch {
+		case idx == m.back:
+			if cur == "" {
+				return nil
+			}
+			cur = parentGroup(cur)
+			continue
+		case idx < len(m.groups):
+			cur = joinGroup(cur, m.groups[idx])
+			continue
+		case idx < len(m.groups)+len(m.scopes):
+			err = interactiveScopeEdit(cfg, &cfg.Scopes[m.scopes[idx-len(m.groups)]])
+		case idx == m.addScope:
+			err = interactiveScopeAdd(cfg, cur)
+		case idx == m.addGroup:
+			err = interactiveGroupAdd(cfg, cur)
+		case idx == m.groupMenu:
+			cur, err = interactiveGroupEdit(cfg, cur)
 		}
 		if err != nil {
 			// Same rule as the main menu: a rejected name or a failed write
@@ -272,7 +279,107 @@ func interactiveScopes(cfg *Config) error {
 	}
 }
 
-func interactiveScopeAdd(cfg *Config) error {
+// scopeManageMenu is one level of the "Manage scopes" tree: the browsable rows
+// plus the action rows that act on wherever you currently are.
+type scopeManageMenu struct {
+	treeLevel
+	addScope  int
+	addGroup  int
+	groupMenu int // -1 at the root: there is no group to rename or delete
+	back      int
+}
+
+func buildScopeManageMenu(cfg *Config, cur string) scopeManageMenu {
+	m := scopeManageMenu{treeLevel: buildTreeLevel(cfg, cur, formatScopeLine), groupMenu: -1}
+	m.addScope = len(m.rows)
+	m.rows = append(m.rows, "[+] Add a new scope here")
+	m.addGroup = len(m.rows)
+	m.rows = append(m.rows, "[+] Add a new group here")
+	if cur != "" {
+		m.groupMenu = len(m.rows)
+		m.rows = append(m.rows, "[#] Rename / delete "+groupDisplay(cur))
+	}
+	m.back = len(m.rows)
+	m.rows = append(m.rows, backRow(cur))
+	return m
+}
+
+// interactiveGroupAdd creates a group under `parent`. The name may itself be a
+// path, so a whole branch can be typed in one go.
+func interactiveGroupAdd(cfg *Config, parent string) error {
+	name, err := promptString("New group in "+groupDisplay(parent), "")
+	if err != nil {
+		return nil
+	}
+	path, err := normalizeGroup(joinGroup(parent, strings.TrimSpace(name)))
+	if err != nil {
+		return err
+	}
+	if path == "" || path == parent {
+		return nil
+	}
+	if !cfg.addGroup(path) {
+		return fmt.Errorf("group %s already exists", groupDisplay(path))
+	}
+	if err := cfg.saveScopes(); err != nil {
+		return err
+	}
+	fmt.Printf("%s: added group %s (saved %s)\n", prog, groupDisplay(path), cfg.scopesDest())
+	return nil
+}
+
+// interactiveGroupEdit renames or deletes the group being browsed. It returns
+// where the browser should now stand: the new path after a rename, the parent
+// after a delete.
+func interactiveGroupEdit(cfg *Config, cur string) (string, error) {
+	empty := cfg.groupScopeCount(cur) == 0 && len(cfg.childGroups(cur)) == 0
+	del := "Delete this group"
+	if !empty {
+		del += " (only when empty)"
+	}
+	idx, err := promptChoice(groupDisplay(cur), []string{"Rename / move this group", del, "[<] Back"})
+	if err != nil || idx == 2 {
+		return cur, nil
+	}
+	if idx == 1 {
+		if !empty {
+			return cur, fmt.Errorf("group %s still holds scopes or subgroups — move them out first", groupDisplay(cur))
+		}
+		ok, _ := promptYesNo(fmt.Sprintf("Delete group %s?", groupDisplay(cur)), false)
+		if !ok {
+			return cur, nil
+		}
+		cfg.removeGroup(cur)
+		if err := cfg.saveScopes(); err != nil {
+			return parentGroup(cur), err
+		}
+		fmt.Printf("%s: deleted group %s (saved %s)\n", prog, groupDisplay(cur), cfg.scopesDest())
+		return parentGroup(cur), nil
+	}
+
+	v, err := promptString("New path for "+groupDisplay(cur), cur)
+	if err != nil {
+		return cur, nil
+	}
+	to, err := normalizeGroup(v)
+	if err != nil {
+		return cur, err
+	}
+	if to == "" || to == cur {
+		return cur, nil
+	}
+	if strings.HasPrefix(to, cur+groupSep) {
+		return cur, fmt.Errorf("cannot move %s into itself", groupDisplay(cur))
+	}
+	cfg.renameGroup(cur, to)
+	if err := cfg.saveScopes(); err != nil {
+		return to, err
+	}
+	fmt.Printf("%s: %s → %s (saved %s)\n", prog, groupDisplay(cur), groupDisplay(to), cfg.scopesDest())
+	return to, nil
+}
+
+func interactiveScopeAdd(cfg *Config, group string) error {
 	name, err := promptString("New scope name", "")
 	if err != nil {
 		return nil
@@ -301,27 +408,43 @@ func interactiveScopeAdd(cfg *Config) error {
 	if err != nil || ttl == "" {
 		return nil
 	}
-	cfg.Scopes = append(cfg.Scopes, Scope{Name: name, Principal: principal, TTL: ttl})
+	cfg.Scopes = append(cfg.Scopes, Scope{Name: name, Principal: principal, TTL: ttl, Group: cleanGroupPath(group)})
 	sortScopes(cfg)
 	if err := cfg.saveScopes(); err != nil {
 		return err
 	}
-	fmt.Printf("%s: added scope %s → principal=%s ttl=%s (saved %s)\n",
-		prog, name, principal, ttl, cfg.scopesDest())
+	fmt.Printf("%s: added scope %s → principal=%s ttl=%s group=%s (saved %s)\n",
+		prog, name, principal, ttl, groupDisplay(group), cfg.scopesDest())
 	return nil
 }
 
-// interactiveScopeTTL is the per-scope submenu. Changing the default mint time
-// is the only action for now; principal edits and deletion stay in
-// `mintk scopes edit`, where they're less likely to be hit by accident.
-func interactiveScopeTTL(cfg *Config, s *Scope) error {
+// interactiveScopeEdit is the per-scope submenu: the default mint time and which
+// group the scope lives in — the two things that get retuned day to day.
+// Principal edits and deletion stay in `mintk scopes edit`, where they're less
+// likely to be hit by accident.
+func interactiveScopeEdit(cfg *Config, s *Scope) error {
 	for {
 		opts := []string{
 			fmt.Sprintf("Default mint time: %s", s.TTL),
+			fmt.Sprintf("Group: %s", groupDisplay(s.Group)),
 			"[<] Back",
 		}
 		idx, err := promptChoice(formatScopeLine(*s), opts)
-		if err != nil || idx != 0 {
+		if err != nil || idx == 2 {
+			return nil
+		}
+		if idx == 1 {
+			g, ok := promptGroup(cfg, fmt.Sprintf("Group for %s", s.Name), s.Group)
+			if !ok || g == s.Group {
+				continue
+			}
+			s.Group = g
+			if err := cfg.saveScopes(); err != nil {
+				return err
+			}
+			fmt.Printf("%s: %s → group %s (saved %s)\n", prog, s.Name, groupDisplay(g), cfg.scopesDest())
+			// Moving the scope out from under the browser's feet: the caller's
+			// listing no longer holds it.
 			return nil
 		}
 		ttl, err := promptTTL(fmt.Sprintf("Default mint time for %s", s.Name), s.TTL)

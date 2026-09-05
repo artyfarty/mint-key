@@ -12,10 +12,15 @@ import (
 
 // Scope maps a friendly name to a certificate principal and a default lifetime.
 // The principal is what target hosts must list in their AuthorizedPrincipalsFile.
+//
+// Group is purely organizational: a slash-separated path ("infra/prod") that
+// places the scope in the menu tree. It has no effect on the issued cert, and a
+// mintk that predates groups ignores the field (see groups.go).
 type Scope struct {
 	Name      string `yaml:"name"`
 	Principal string `yaml:"principal"`
 	TTL       string `yaml:"ttl"`
+	Group     string `yaml:"group,omitempty"`
 }
 
 // Config mirrors the bash mint config vars, now as YAML at ~/.config/mint-key/.
@@ -48,6 +53,11 @@ type Config struct {
 	ScopesFile string `yaml:"scopes_file,omitempty"`
 
 	Scopes []Scope `yaml:"scopes,omitempty"`
+
+	// Groups declares scope-group paths that hold no scopes yet — the tree is
+	// otherwise implied by the scopes' `group:` fields, so an empty group would
+	// vanish on the next write.
+	Groups []string `yaml:"groups,omitempty"`
 
 	// secret grants (optional subsystem — absent for cert-only setups)
 	Secrets *SecretsConfig `yaml:"secrets,omitempty"`
@@ -99,9 +109,12 @@ type SecretsConfig struct {
 	Scopes []SecretScope `yaml:"scopes,omitempty"`
 }
 
-// scopesDoc is the on-disk shape of an external scopes file.
+// scopesDoc is the on-disk shape of an external scopes file. `groups:` is
+// additive — an older mintk unmarshals this document into a struct without it and
+// simply doesn't see the key.
 type scopesDoc struct {
-	Scopes []Scope `yaml:"scopes"`
+	Scopes []Scope  `yaml:"scopes"`
+	Groups []string `yaml:"groups,omitempty"`
 }
 
 // configPath resolves the active config file: $MINTK_CONFIG wins, otherwise
@@ -206,6 +219,7 @@ func loadConfig() (*Config, error) {
 	if err := c.loadScopes(); err != nil {
 		return nil, err
 	}
+	c.normalizeGroups()
 	return &c, nil
 }
 
@@ -220,7 +234,7 @@ func (c *Config) loadScopes() error {
 	data, err := os.ReadFile(p)
 	if err != nil {
 		if os.IsNotExist(err) {
-			c.Scopes = nil
+			c.Scopes, c.Groups = nil, nil
 			return nil
 		}
 		return err
@@ -229,7 +243,7 @@ func (c *Config) loadScopes() error {
 	if err := yaml.Unmarshal(data, &sf); err != nil {
 		return fmt.Errorf("parse %s: %w", p, err)
 	}
-	c.Scopes = sf.Scopes
+	c.Scopes, c.Groups = sf.Scopes, sf.Groups
 	return nil
 }
 
@@ -344,7 +358,9 @@ func (c *Config) save() error {
 	// Don't duplicate scopes inline when they live in an external file.
 	out := *c
 	if c.ScopesFile != "" {
-		out.Scopes = nil
+		out.Scopes, out.Groups = nil, nil
+	} else {
+		out.Groups = c.declaredGroups()
 	}
 	data, err := yaml.Marshal(&out)
 	if err != nil {
@@ -363,7 +379,7 @@ func (c *Config) saveScopes() error {
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return err
 	}
-	data, err := yaml.Marshal(scopesDoc{Scopes: c.Scopes})
+	data, err := yaml.Marshal(scopesDoc{Scopes: c.Scopes, Groups: c.declaredGroups()})
 	if err != nil {
 		return err
 	}

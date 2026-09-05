@@ -31,6 +31,11 @@ This means minting can never grant reach a host hasn't agreed to — the trust d
 lives on the host, not in the issuance step. Creating a new scope is therefore a
 host-side edit (list the principal), not a CA operation: no tap, no key handling.
 
+Scopes may carry a `group:` path (`infra/prod`) so the menus can present them as a tree,
+but that is a navigation aid and nothing else: the namespace stays flat and globally
+unique, and the group never reaches the cert. Nothing in the security model knows groups
+exist. See [mintk-go-spec.md](mintk-go-spec.md#scope-groups).
+
 ## Why the tap is on issuance, not connection
 
 The precious key is the **CA** key, and it stays on the YubiKey. The per-scope **user**

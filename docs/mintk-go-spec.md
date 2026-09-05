@@ -47,9 +47,13 @@ scopes:
   - name: example-host
     principal: host-example
     ttl: 8h
+    group: infra/prod                  # optional; menu placement only (see Scope groups)
   - name: general
     principal: general
     ttl: 24h
+
+groups:                                # only the groups no scope points at yet
+  - infra/staging
 ```
 
 Ship `config.example.yaml` with placeholders; never commit a real one.
@@ -82,10 +86,20 @@ something created in one action shows up in the next. The secret entries are sim
 when no `secrets:` block is configured. Needs a terminal.
 
 Scope management here is deliberately narrower than `scopes edit`: adding a scope (name →
-principal → default mint time) and retuning an existing scope's default mint time are the
-day-to-day operations; changing a principal or deleting a scope stays in `scopes edit`.
-Because the menu reloads the config on every pass, changes are written to the scopes file
-(or the config) **as they're made**, not accumulated until exit.
+principal → default mint time), filing it into a group, organizing the groups themselves,
+and retuning an existing scope's default mint time are the day-to-day operations; changing
+a principal or deleting a scope stays in `scopes edit`. Because the menu reloads the config
+on every pass, changes are written to the scopes file (or the config) **as they're made**,
+not accumulated until exit.
+
+Both "Mint a cert" and "Manage scopes" browse the [scope-group tree](#scope-groups): a
+group row descends into it, `[<] Up` climbs back out, and the row for a group shows how
+many scopes it holds in total. Under "Manage scopes" the actions apply to wherever you
+currently stand — `[+] Add a new scope here`, `[+] Add a new group here`, and (inside a
+group) `[#] Rename / delete` it. A group is only deletable once it is empty; renaming it
+moves the whole branch and rewrites the scopes that pointed into it. A scope's own submenu
+carries `Group:`, which moves it — including to a group created on the spot. With no groups
+configured, every one of these menus is the flat list it always was.
 
 While the menu is up it renames the terminal tab to `mintk i` — with several terminals
 open, otherwise it's guesswork which one is waiting on a YubiKey tap. The previous title is
@@ -120,13 +134,33 @@ cert signing in Go — the agent/PKCS#11 paths are battle-tested via `ssh-keygen
 
 ### `mintk scopes list | add | delete | edit | pull | push`
 CRUD over `scopes` in the YAML.
-- `list` — table of name / principal / ttl.
-- `add <name> <principal> [<ttl>]` and `delete <name>` — non-interactive edits.
+- `list` — table of name / principal / ttl, indented by group.
+- `add <name> <principal> [<ttl>] [-g <group>]` and `delete <name>` — non-interactive edits.
 - `edit` — **interactive huh-based editor like wg-hop's `editCmd`/`runEditConfig`**:
   pick a scope to edit, or add/delete, accumulate changes, write the YAML on exit.
-  (wg-hop uses charmbracelet/huh forms — mirror that look/flow.)
+  (wg-hop uses charmbracelet/huh forms — mirror that look/flow.) This one stays a *flat*
+  list — every scope at once, group spelled out per row — with the group as one more
+  editable field. The tree view lives in `mintk i`.
 - `pull` / `push` — when `scopes_file` is set (see below), `git pull --ff-only` /
   `git add+commit+push` the scopes repo, for sharing the scope list across machines.
+
+#### Scope groups
+Long scope lists get unnavigable, so a scope can carry an optional `group:` — a
+slash-separated path (`infra/prod`) placing it in a tree. This is **presentation only**:
+scope names stay one flat, globally unique namespace (they are filenames under
+`sessions_dir` and the argument to `mintk key`), and the group never reaches the issued
+cert. A scope without `group:` sits at the root.
+
+The tree is derived from the scopes themselves, plus a top-level `groups:` list holding the
+paths *no scope points at* — otherwise a freshly created, still-empty group would vanish on
+the next write. Ancestors are implied, so only the deepest empty path is written down.
+
+The shape is deliberately additive so an older `mintk` keeps working: `scopes:` is the same
+flat list of the same records with one extra key, and yaml.v3 ignores unknown fields. The
+caveat runs the other way — a pre-groups binary that *writes* the scopes file drops
+`group:`/`groups:`, flattening the tree. Group paths are cleaned leniently on load (a
+hand-edited file never becomes a hard error) and validated on input, where each segment gets
+the same character set as a scope name.
 
 **Shared scopes (`scopes_file`):** the scope list (alias → principal → ttl) can live in a
 separate YAML, typically a private git repo, so it travels across machines. When set, the
@@ -256,6 +290,8 @@ Go 1.25 toolchain, cobra/huh/yaml pinned to wg-hop's versions). Layout: `main.go
 load/save), `init.go` (`mintk init` bootstrap + CA import), `key.go` (all four signing
 modes + agent fingerprint check + agent-refused hint), `doctor.go` (`mintk doctor`
 prerequisite checks), `scopes.go` (list/add/delete + huh `edit` loop + git pull/push),
+`groups.go` (the scope-group tree: path handling, level/menu building, group pickers;
+unit-tested in `groups_test.go`, including both directions of the pre-groups round-trip),
 `clean.go`, `cleankeys.go` (`mintk clean-keys` — wipe `sessions_dir` with confirm/`-y`),
 `deploy.go` (ships an idempotent trust script over one `ssh -t` connection as a here-doc,
 `-i`/`--password` bootstrap auth, alias resolution via `ssh -G`), `sshconfig.go` (add/edit `Host` blocks; unit-tested in

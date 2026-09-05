@@ -49,20 +49,35 @@ win_ykman: "/mnt/c/Program Files/Yubico/YubiKey Manager CLI/ykman.exe"
 # so it travels across machines. When set, `scopes` below is ignored and
 # `mintk scopes add/edit/delete` + `mintk scopes pull/push` operate on this file.
 # scopes_file: ~/work/mint-scopes/scopes.yaml
+#
+# Optional `group:` — a slash-separated path that files the scope into a tree,
+# purely so long scope lists stay navigable in `mintk i`. It changes nothing about
+# the issued cert: scope *names* remain one flat, globally unique namespace, and
+# `mintk key <name>` never mentions the group. A scope without `group:` sits at
+# the root. A mintk built before groups existed ignores the field.
 
 scopes:
   - name: example-host
     principal: host-example
     ttl: 8h
+    group: infra/prod
   - name: deploy
     principal: deploy-example
     ttl: 24h
+    group: infra/prod
   - name: general
     principal: general
     ttl: 24h
   - name: danger
     principal: danger-example
     ttl: 1h
+    group: infra/lab
+
+# Groups that hold no scopes yet — the tree is otherwise implied by the `group:`
+# fields above, so an empty group would disappear on the next write. Managed for
+# you by `mintk i` → Manage scopes; you rarely need to touch this by hand.
+# groups:
+#   - infra/staging
 
 # --- secret grants (optional) -------------------------------------------------
 # The sibling of cert minting for *credentials*: one tap decrypts a scope's

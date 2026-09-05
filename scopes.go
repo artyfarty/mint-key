@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -118,14 +119,26 @@ func printScopes(cfg *Config) {
 	fmt.Printf("configured scopes (from %s):\n", cfg.path)
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "  NAME\tPRINCIPAL\tTTL")
-	for _, s := range cfg.Scopes {
-		fmt.Fprintf(w, "  %s\t%s\t%s\n", s.Name, s.Principal, s.TTL)
-	}
+	printScopeTree(cfg, w, "", "  ")
 	w.Flush()
 }
 
+// printScopeTree prints one group level: its subgroups (recursively), then the
+// scopes sitting directly in it. Without groups this is the old flat listing.
+func printScopeTree(cfg *Config, w io.Writer, group, indent string) {
+	for _, g := range cfg.childGroups(group) {
+		fmt.Fprintf(w, "%s%s\t\t\n", indent, g+groupSep)
+		printScopeTree(cfg, w, joinGroup(group, g), indent+"  ")
+	}
+	for _, i := range cfg.scopeIndexes(group) {
+		s := cfg.Scopes[i]
+		fmt.Fprintf(w, "%s%s\t%s\t%s\n", indent, s.Name, s.Principal, s.TTL)
+	}
+}
+
 func scopesAddCmd() *cobra.Command {
-	return &cobra.Command{
+	var group string
+	cmd := &cobra.Command{
 		Use:   "add <name> <principal> [<ttl>]",
 		Short: "Add a scope (default ttl 8h)",
 		Args:  cobra.RangeArgs(2, 3),
@@ -141,19 +154,26 @@ func scopesAddCmd() *cobra.Command {
 			if _, err := normalizeTTL(ttl); err != nil {
 				return err
 			}
+			g, err := normalizeGroup(group)
+			if err != nil {
+				return err
+			}
 			name := args[0]
 			if _, exists := cfg.scope(name); exists {
 				return fmt.Errorf("scope %q already exists (use `scopes edit` to change it)", name)
 			}
-			cfg.Scopes = append(cfg.Scopes, Scope{Name: name, Principal: args[1], TTL: ttl})
+			cfg.Scopes = append(cfg.Scopes, Scope{Name: name, Principal: args[1], TTL: ttl, Group: g})
 			sortScopes(cfg)
 			if err := cfg.saveScopes(); err != nil {
 				return err
 			}
-			fmt.Printf("%s: added scope %s → principal=%s ttl=%s\n", prog, name, args[1], ttl)
+			fmt.Printf("%s: added scope %s → principal=%s ttl=%s group=%s\n",
+				prog, name, args[1], ttl, groupDisplay(g))
 			return nil
 		},
 	}
+	cmd.Flags().StringVarP(&group, "group", "g", "", "group path to file the scope under (e.g. infra/prod)")
+	return cmd
 }
 
 func scopesDeleteCmd() *cobra.Command {
@@ -203,7 +223,7 @@ func runScopesEdit(cfg *Config) error {
 	for {
 		var options []string
 		for _, s := range cfg.Scopes {
-			options = append(options, formatScopeLine(s))
+			options = append(options, formatScopeLineFlat(s))
 		}
 		addIdx := len(options)
 		options = append(options, "[+] Add new scope")
@@ -264,7 +284,19 @@ func addScopeInteractive(cfg *Config) bool {
 		fmt.Printf("%s\n", err)
 		return false
 	}
-	cfg.Scopes = append(cfg.Scopes, Scope{Name: name, Principal: strings.TrimSpace(principal), TTL: strings.TrimSpace(ttl)})
+	// Only worth a prompt once there is a tree to file it into.
+	group := ""
+	if len(cfg.allGroups()) > 0 {
+		if g, ok := promptGroup(cfg, "Group for "+name, ""); ok {
+			group = g
+		}
+	}
+	cfg.Scopes = append(cfg.Scopes, Scope{
+		Name:      name,
+		Principal: strings.TrimSpace(principal),
+		TTL:       strings.TrimSpace(ttl),
+		Group:     group,
+	})
 	sortScopes(cfg)
 	return true
 }
@@ -275,6 +307,7 @@ func editScopeInteractive(cfg *Config, s *Scope) bool {
 		actions := []string{
 			fmt.Sprintf("Principal: %s", s.Principal),
 			fmt.Sprintf("TTL: %s", s.TTL),
+			fmt.Sprintf("Group: %s", groupDisplay(s.Group)),
 			"Delete scope",
 			"Back",
 		}
@@ -300,6 +333,12 @@ func editScopeInteractive(cfg *Config, s *Scope) bool {
 				return true
 			}
 		case 2:
+			g, ok := promptGroup(cfg, fmt.Sprintf("Group for %s", s.Name), s.Group)
+			if ok && g != s.Group {
+				s.Group = g
+				return true
+			}
+		case 3:
 			ok, _ := promptYesNo(fmt.Sprintf("Delete scope %q?", s.Name), false)
 			if ok {
 				removeScope(cfg, s.Name)
@@ -313,6 +352,15 @@ func editScopeInteractive(cfg *Config, s *Scope) bool {
 
 func formatScopeLine(s Scope) string {
 	return fmt.Sprintf("%-18s principal=%-18s ttl=%s", s.Name, s.Principal, s.TTL)
+}
+
+// formatScopeLineFlat is formatScopeLine for a listing with no tree around it,
+// where the scope's group has to be spelled out rather than implied.
+func formatScopeLineFlat(s Scope) string {
+	if s.Group == "" {
+		return formatScopeLine(s)
+	}
+	return formatScopeLine(s) + "  group=" + groupDisplay(s.Group)
 }
 
 func removeScope(cfg *Config, name string) bool {

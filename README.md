@@ -91,8 +91,8 @@ mintk interactive | mintk i          # menu: mint, grant a secret, manage scopes
 mintk init                           # bootstrap config (import CA from the YubiKey)
 mintk doctor                         # check prerequisites are in place
 mintk key <scope> [<ttl>]            # issue/refresh a cert for <scope> into the agent
-mintk scopes list                    # list configured scopes
-mintk scopes add <name> <principal> [<ttl>]
+mintk scopes list                    # list configured scopes (indented by group)
+mintk scopes add <name> <principal> [<ttl>] [-g <group>]
 mintk scopes edit                    # interactive editor
 mintk scopes pull | push             # sync the shared scopes file via git
 mintk clean                          # (WSL+agent) recover after swapping YubiKeys
@@ -109,6 +109,26 @@ command's full help.
 Scopes, principals, default lifetimes, the signing mode, CA location and the PKCS#11 path
 are all set in your config (`~/.config/mint-key/config.yaml`, or `$MINTK_CONFIG`); see
 [`config.example.yaml`](config.example.yaml). Nothing host-specific is baked into the code.
+
+### Grouping scopes
+
+Once there are more scopes than fit on a screen, give them a `group:` — a slash-separated
+path that files them into a tree:
+
+```yaml
+scopes:
+  - name: example-host
+    principal: host-example
+    ttl: 8h
+    group: infra/prod
+```
+
+`mintk i` then browses that tree instead of one long list (both when minting and when
+managing scopes), and creates, renames, moves and deletes the groups for you. It is
+**presentation only**: scope names stay a flat, globally unique namespace, `mintk key
+<scope>` is unchanged, and nothing about the group reaches the issued cert. Scopes without
+a group sit at the root, and a `mintk` older than this feature reads the same file fine —
+it just doesn't show the tree.
 
 ### Sharing scopes across machines
 
