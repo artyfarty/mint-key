@@ -145,7 +145,7 @@ func runKey(scopeName, ttlOverride string) error {
 		if !fileExists(ck) {
 			return fmt.Errorf("ca_key %q not found", ck)
 		}
-		fmt.Printf("%s: signing %s  principal=%s  +%s  [software CA]\n", prog, scopeName, sc.Principal, ttl)
+		fmt.Fprintf(outW, "%s: signing %s  principal=%s  +%s  [software CA]\n", prog, scopeName, sc.Principal, ttl)
 		args := append([]string{"-s", ck}, certArgs()...)
 		args = append(args, key+".pub")
 		if err := run("ssh-keygen", args...); err != nil {
@@ -159,7 +159,7 @@ func runKey(scopeName, ttlOverride string) error {
 		if err := caInAgent(cfg.caPubPath()); err != nil {
 			return err
 		}
-		fmt.Printf("%s: signing %s  principal=%s  +%s  [agent CA — tap to sign]\n", prog, scopeName, sc.Principal, ttl)
+		fmt.Fprintf(outW, "%s: signing %s  principal=%s  +%s  [agent CA — tap to sign]\n", prog, scopeName, sc.Principal, ttl)
 		args := append([]string{"-U", "-s", cfg.caPubPath()}, certArgs()...)
 		args = append(args, key+".pub")
 		if err := run("ssh-keygen", args...); err != nil {
@@ -186,7 +186,7 @@ func runKey(scopeName, ttlOverride string) error {
 		if !fileExists(mod) {
 			return fmt.Errorf("ykcs11 %q not found", mod)
 		}
-		fmt.Printf("%s: signing %s  principal=%s  +%s  [YubiKey — PIN + tap]\n", prog, scopeName, sc.Principal, ttl)
+		fmt.Fprintf(outW, "%s: signing %s  principal=%s  +%s  [YubiKey — PIN + tap]\n", prog, scopeName, sc.Principal, ttl)
 		args := append([]string{"-s", cfg.caPubPath(), "-D", mod}, certArgs()...)
 		args = append(args, key+".pub")
 		if err := run("ssh-keygen", args...); err != nil {
@@ -200,7 +200,7 @@ func runKey(scopeName, ttlOverride string) error {
 	// Load into the agent with a matching lifetime (best-effort).
 	loadIntoAgent(key, ttl)
 
-	fmt.Printf("%s: minted.\n", prog)
+	fmt.Fprintf(outW, "%s: minted.\n", prog)
 	printCertSummary(key + "-cert.pub")
 	return nil
 }
@@ -242,7 +242,7 @@ func runWSLDelegate(cfg *Config, scopeName, key string, certArgs []string) error
 		os.Remove(certStage)
 	}()
 
-	fmt.Printf("%s: signing %s  [WSL→Windows YubiKey — PIN + tap]\n", prog, scopeName)
+	fmt.Fprintf(outW, "%s: signing %s  [WSL→Windows YubiKey — PIN + tap]\n", prog, scopeName)
 	args := append([]string{"-s", toWinPath(caStage), "-D", cfg.WinYKCS11}, certArgs...)
 	args = append(args, toWinPath(pubStage))
 	if err := run(cfg.WinSSHKeygen, args...); err != nil {
@@ -283,12 +283,12 @@ func caInAgent(caPub string) error {
 }
 
 func printAgentRefusedHint() {
-	fmt.Fprintf(os.Stderr, "\n%s: agent signing FAILED.\n", prog)
-	fmt.Fprintf(os.Stderr, "  If the YubiKey asked for PIN/tap but you still got \"agent refused operation\",\n")
-	fmt.Fprintf(os.Stderr, "  a stale cert from a *different* YubiKey is shadowing the one plugged in now. Fix:\n")
-	fmt.Fprintf(os.Stderr, "    - plug in the YubiKey whose cert is currently in the store, OR\n")
-	fmt.Fprintf(os.Stderr, "    - run  %s clean   to sync the store to the plugged-in YubiKey,\n", prog)
-	fmt.Fprintf(os.Stderr, "  then re-run this mint.\n")
+	fmt.Fprintf(errW, "\n%s: agent signing FAILED.\n", prog)
+	fmt.Fprintf(errW, "  If the YubiKey asked for PIN/tap but you still got \"agent refused operation\",\n")
+	fmt.Fprintf(errW, "  a stale cert from a *different* YubiKey is shadowing the one plugged in now. Fix:\n")
+	fmt.Fprintf(errW, "    - plug in the YubiKey whose cert is currently in the store, OR\n")
+	fmt.Fprintf(errW, "    - run  %s clean   to sync the store to the plugged-in YubiKey,\n", prog)
+	fmt.Fprintf(errW, "  then re-run this mint.\n")
 }
 
 // loadIntoAgent adds the key+cert to the ssh-agent with a matching lifetime.
@@ -299,7 +299,7 @@ func loadIntoAgent(key, ttl string) {
 	if exec.Command("ssh-add", key).Run() == nil {
 		return
 	}
-	fmt.Printf("%s: note — could not add to agent (no agent?); cert at %s-cert.pub\n", prog, key)
+	fmt.Fprintf(outW, "%s: note — could not add to agent (no agent?); cert at %s-cert.pub\n", prog, key)
 }
 
 // printCertSummary prints lines 2..9 of `ssh-keygen -L` (the human-readable cert).
@@ -311,7 +311,7 @@ func printCertSummary(certPath string) {
 	sc := bufio.NewScanner(bytes.NewReader(out))
 	for i := 1; sc.Scan() && i <= 9; i++ {
 		if i >= 2 {
-			fmt.Println(sc.Text())
+			fmt.Fprintln(outW, sc.Text())
 		}
 	}
 }
@@ -347,8 +347,8 @@ func copyFile(src, dst string) error {
 func run(name string, args ...string) error {
 	cmd := exec.Command(name, args...)
 	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stdout = outW
+	cmd.Stderr = errW
 	return cmd.Run()
 }
 

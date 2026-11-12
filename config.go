@@ -62,6 +62,9 @@ type Config struct {
 	// secret grants (optional subsystem — absent for cert-only setups)
 	Secrets *SecretsConfig `yaml:"secrets,omitempty"`
 
+	// `mintk web` (optional)
+	Web *WebConfig `yaml:"web,omitempty"`
+
 	path           string // where this config was loaded from
 	scopesExternal bool   // scopes came from ScopesFile
 }
@@ -107,6 +110,18 @@ type SecretsConfig struct {
 	DefaultTTL    string `yaml:"default_ttl,omitempty"`     // default grant lifetime
 
 	Scopes []SecretScope `yaml:"scopes,omitempty"`
+}
+
+// WebConfig configures `mintk web`, the browser UI.
+type WebConfig struct {
+	// Listen is the loopback address to serve on (default localhost:7537).
+	// Anything that isn't a loopback address is refused.
+	Listen string `yaml:"listen,omitempty"`
+	// SessionTTL is how long one YubiKey tap keeps the UI unlocked (default 12h).
+	SessionTTL string `yaml:"session_ttl,omitempty"`
+	// CredentialsFile holds the registered keys (default web-credentials.json
+	// next to the config file).
+	CredentialsFile string `yaml:"credentials_file,omitempty"`
 }
 
 // scopesDoc is the on-disk shape of an external scopes file. `groups:` is
@@ -366,7 +381,7 @@ func (c *Config) save() error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(c.path, data, 0o600)
+	return writeConfigFile(c.path, data, 0o600)
 }
 
 // saveScopes persists the scope list to the external scopes file when one is
@@ -383,5 +398,16 @@ func (c *Config) saveScopes() error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(p, data, 0o644)
+	return writeConfigFile(p, data, 0o644)
+}
+
+// writeConfigFile replaces a config/scopes file atomically: `mintk web` and the
+// CLI can both write the scope list, and a reader must never see half a file.
+// A symlinked file (scopes kept in a repo, linked into place) is written through
+// the link rather than replaced by a regular file.
+func writeConfigFile(p string, data []byte, mode os.FileMode) error {
+	if real, err := filepath.EvalSymlinks(p); err == nil {
+		p = real
+	}
+	return writeFileAtomic(p, data, mode)
 }

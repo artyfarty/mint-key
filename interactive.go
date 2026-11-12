@@ -153,20 +153,28 @@ func certRemaining(cfg *Config, scope string) (time.Duration, bool) {
 // certValidRe matches ssh-keygen -L's validity line:
 //
 //	Valid: from 2026-08-10T22:00:00 to 2026-08-11T06:00:00
-var certValidRe = regexp.MustCompile(`Valid: from \S+ to (\S+)`)
+var certValidRe = regexp.MustCompile(`Valid: from (\S+) to (\S+)`)
 
 // parseCertValidTo extracts the expiry from `ssh-keygen -L` output. A cert with
 // no expiry ("forever") reports none — this is only used to show a countdown.
 func parseCertValidTo(out string) (time.Time, bool) {
+	_, to, ok := parseCertValidity(out)
+	return to, ok
+}
+
+// parseCertValidity extracts both ends of the validity window — the web UI draws
+// how much of the lifetime is left, which needs the start too.
+func parseCertValidity(out string) (from, to time.Time, ok bool) {
 	m := certValidRe.FindStringSubmatch(out)
 	if m == nil {
-		return time.Time{}, false
+		return time.Time{}, time.Time{}, false
 	}
-	t, err := time.ParseInLocation("2006-01-02T15:04:05", m[1], time.Local)
-	if err != nil {
-		return time.Time{}, false
+	from, err1 := time.ParseInLocation("2006-01-02T15:04:05", m[1], time.Local)
+	to, err2 := time.ParseInLocation("2006-01-02T15:04:05", m[2], time.Local)
+	if err1 != nil || err2 != nil {
+		return time.Time{}, time.Time{}, false
 	}
-	return t, true
+	return from, to, true
 }
 
 // --- grant a secret ----------------------------------------------------------
@@ -311,15 +319,12 @@ func interactiveGroupAdd(cfg *Config, parent string) error {
 	if err != nil {
 		return nil
 	}
-	path, err := normalizeGroup(joinGroup(parent, strings.TrimSpace(name)))
-	if err != nil {
-		return err
-	}
-	if path == "" || path == parent {
+	if strings.TrimSpace(name) == "" {
 		return nil
 	}
-	if !cfg.addGroup(path) {
-		return fmt.Errorf("group %s already exists", groupDisplay(path))
+	path, err := cfg.addGroupChecked(joinGroup(parent, strings.TrimSpace(name)))
+	if err != nil {
+		return err
 	}
 	if err := cfg.saveScopes(); err != nil {
 		return err
@@ -343,13 +348,15 @@ func interactiveGroupEdit(cfg *Config, cur string) (string, error) {
 	}
 	if idx == 1 {
 		if !empty {
-			return cur, fmt.Errorf("group %s still holds scopes or subgroups — move them out first", groupDisplay(cur))
+			return cur, cfg.deleteGroupChecked(cur)
 		}
 		ok, _ := promptYesNo(fmt.Sprintf("Delete group %s?", groupDisplay(cur)), false)
 		if !ok {
 			return cur, nil
 		}
-		cfg.removeGroup(cur)
+		if err := cfg.deleteGroupChecked(cur); err != nil {
+			return cur, err
+		}
 		if err := cfg.saveScopes(); err != nil {
 			return parentGroup(cur), err
 		}
@@ -361,17 +368,16 @@ func interactiveGroupEdit(cfg *Config, cur string) (string, error) {
 	if err != nil {
 		return cur, nil
 	}
-	to, err := normalizeGroup(v)
+	if cleanGroupPath(v) == "" {
+		return cur, nil
+	}
+	to, err := cfg.renameGroupChecked(cur, v)
 	if err != nil {
 		return cur, err
 	}
-	if to == "" || to == cur {
+	if to == cur {
 		return cur, nil
 	}
-	if strings.HasPrefix(to, cur+groupSep) {
-		return cur, fmt.Errorf("cannot move %s into itself", groupDisplay(cur))
-	}
-	cfg.renameGroup(cur, to)
 	if err := cfg.saveScopes(); err != nil {
 		return to, err
 	}
@@ -388,8 +394,7 @@ func interactiveScopeAdd(cfg *Config, group string) error {
 	if name == "" {
 		return nil
 	}
-	// The name becomes a filename under sessions_dir, so it gets the same
-	// constraints as a secret scope.
+	// Checked before asking for the rest, so a taken or invalid name fails fast.
 	if err := validScopeName(name); err != nil {
 		return err
 	}
@@ -408,8 +413,9 @@ func interactiveScopeAdd(cfg *Config, group string) error {
 	if err != nil || ttl == "" {
 		return nil
 	}
-	cfg.Scopes = append(cfg.Scopes, Scope{Name: name, Principal: principal, TTL: ttl, Group: cleanGroupPath(group)})
-	sortScopes(cfg)
+	if err := cfg.addScopeChecked(name, principal, ttl, group); err != nil {
+		return err
+	}
 	if err := cfg.saveScopes(); err != nil {
 		return err
 	}

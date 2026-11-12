@@ -282,7 +282,7 @@ func (a *ageClient) decryptPiped(blobPath string) ([]byte, error) {
 	cmd.Stdin = bytes.NewReader(blob)
 	var out, errb bytes.Buffer
 	cmd.Stdout = &out
-	cmd.Stderr = io.MultiWriter(os.Stderr, &errb)
+	cmd.Stderr = io.MultiWriter(errW, &errb)
 	if err := cmd.Run(); err != nil {
 		return nil, fmt.Errorf("age decrypt failed: %s", ageError(errb.String(), err))
 	}
@@ -371,11 +371,11 @@ func (a *ageClient) decryptViaConsole(blobPath string) ([]byte, error) {
 		return nil, err
 	}
 
-	fmt.Printf("%s: a console window is opening for the YubiKey prompt — answer it there\n", prog)
+	fmt.Fprintf(outW, "%s: a console window is opening for the YubiKey prompt — answer it there\n", prog)
 	cmd := exec.Command("cmd.exe", "/c", batWin)
 	cmd.Dir = "/mnt/c" // cmd.exe refuses a WSL working directory
 	var errb bytes.Buffer
-	cmd.Stderr = io.MultiWriter(os.Stderr, &errb)
+	cmd.Stderr = io.MultiWriter(errW, &errb)
 	if err := cmd.Run(); err != nil {
 		return nil, fmt.Errorf("age decrypt failed (see the console window): %s", ageError(errb.String(), err))
 	}
@@ -451,7 +451,7 @@ func (a *ageClient) encrypt(plain []byte, recipients []string) ([]byte, error) {
 	cmd.Stdin = bytes.NewReader(plain)
 	var out, errb bytes.Buffer
 	cmd.Stdout = &out
-	cmd.Stderr = io.MultiWriter(os.Stderr, &errb)
+	cmd.Stderr = io.MultiWriter(errW, &errb)
 	if err := cmd.Run(); err != nil {
 		return nil, fmt.Errorf("age encrypt failed: %s", ageError(errb.String(), err))
 	}

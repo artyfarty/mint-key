@@ -42,7 +42,7 @@ func runCleanKeys(cfg *Config, yes bool) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			fmt.Printf("%s: sessions_dir %s does not exist — nothing to clean.\n", prog, dir)
+			fmt.Fprintf(outW, "%s: sessions_dir %s does not exist — nothing to clean.\n", prog, dir)
 			return nil
 		}
 		return err
@@ -57,14 +57,14 @@ func runCleanKeys(cfg *Config, yes bool) error {
 		files = append(files, e.Name())
 	}
 	if len(files) == 0 {
-		fmt.Printf("%s: no minted identities in %s — nothing to clean.\n", prog, dir)
+		fmt.Fprintf(outW, "%s: no minted identities in %s — nothing to clean.\n", prog, dir)
 		return nil
 	}
 	sort.Strings(files)
 
-	fmt.Printf("%s: will remove %d file(s) from %s:\n", prog, len(files), dir)
+	fmt.Fprintf(outW, "%s: will remove %d file(s) from %s:\n", prog, len(files), dir)
 	for _, name := range files {
-		fmt.Printf("  - %s\n", name)
+		fmt.Fprintf(outW, "  - %s\n", name)
 	}
 
 	if !yes {
@@ -76,7 +76,7 @@ func runCleanKeys(cfg *Config, yes bool) error {
 			return err
 		}
 		if !ok {
-			fmt.Printf("%s: aborted — nothing removed.\n", prog)
+			fmt.Fprintf(outW, "%s: aborted — nothing removed.\n", prog)
 			return nil
 		}
 	}
@@ -84,11 +84,11 @@ func runCleanKeys(cfg *Config, yes bool) error {
 	var removed int
 	for _, name := range files {
 		if err := os.Remove(filepath.Join(dir, name)); err != nil {
-			fmt.Printf("%s: warning — could not remove %s: %s\n", prog, name, err)
+			fmt.Fprintf(outW, "%s: warning — could not remove %s: %s\n", prog, name, err)
 			continue
 		}
 		removed++
 	}
-	fmt.Printf("%s: removed %d of %d file(s) from %s.\n", prog, removed, len(files), dir)
+	fmt.Fprintf(outW, "%s: removed %d of %d file(s) from %s.\n", prog, removed, len(files), dir)
 	return nil
 }

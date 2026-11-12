@@ -14,7 +14,7 @@ GO          ?= go
 GOTOOLCHAIN ?= auto
 export GOTOOLCHAIN
 
-GOFILES := $(wildcard *.go)
+GOFILES := $(wildcard *.go) $(wildcard web/*.html web/static/*)
 
 # Elevate only when the install dir (or its parent, if it doesn't exist yet)
 # isn't writable — so `make PREFIX=~/.local install` never asks for a password.
@@ -35,6 +35,9 @@ install: build
 	$(SUDO) install -d $(BINDIR)
 	$(SUDO) install -m 0755 $(BIN) $(BINDIR)/$(BIN)
 	@echo "installed $(BINDIR)/$(BIN)"
+	@# A running `mintk web` systemd user unit picks up the new binary (no-op otherwise).
+	@if command -v systemctl >/dev/null 2>&1 && systemctl --user is-active --quiet mintk-web.service 2>/dev/null; then \
+		systemctl --user restart mintk-web.service && echo "restarted mintk-web.service"; fi
 
 uninstall:
 	$(SUDO) rm -f $(BINDIR)/$(BIN)

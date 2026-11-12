@@ -107,6 +107,18 @@ saved on the terminal's title stack (xterm `CSI 22;0t`) and popped on exit; term
 don't implement the stack ignore both sequences, and nothing is emitted when stdout isn't a
 terminal or `TERM` is `dumb`.
 
+### `mintk web`
+Serves the `mintk i` surface to a browser on this machine: the whole scope tree with
+live state and one-click minting, live countdowns for certs and grants, secret grants,
+scope management and cleanup. Loopback only, unlocked with a tap on a registered
+YubiKey (WebAuthn, non-resident credential, no PIN; the first key enrolled through a
+one-time link from the terminal), same-origin-only API (no CORS, Host check against DNS
+rebinding). `mintk web enroll` issues a registration link (it works against a running
+server), and `mintk web service install|uninstall|status` runs the UI as a systemd user
+unit. Creating/editing
+secrets, principal edits and scope deletion stay in the CLI. Full design and threat
+model: [web.md](web.md).
+
 ### `mintk doctor`
 Read-only prerequisite check (replaces the old `install.sh check`): OpenSSH tools +
 version (`-U` needs ≥7.6), the CA public key (+ fingerprint), and the pieces the
@@ -293,6 +305,11 @@ prerequisite checks), `scopes.go` (list/add/delete + huh `edit` loop + git pull/
 `groups.go` (the scope-group tree: path handling, level/menu building, group pickers;
 unit-tested in `groups_test.go`, including both directions of the pre-groups round-trip),
 `clean.go`, `cleankeys.go` (`mintk clean-keys` — wipe `sessions_dir` with confirm/`-y`),
+`web.go` + `web/` (`mintk web`: the HTTP server, request gate and API, the embedded
+page; tested in `web_test.go`), `webauthn.go` (the YubiKey login: WebAuthn verification
+on the standard library, the key store, sessions; tested in `webauthn_test.go`), `webservice.go` (the systemd user unit), `output.go` (the `outW`/`errW` streams the action code
+writes to, so the web server can capture a transcript), `scopeops.go` (the validated
+scope/group edits shared by `mintk i` and `mintk web`),
 `deploy.go` (ships an idempotent trust script over one `ssh -t` connection as a here-doc,
 `-i`/`--password` bootstrap auth, alias resolution via `ssh -G`), `sshconfig.go` (add/edit `Host` blocks; unit-tested in
 `sshconfig_test.go`), `platform.go` (WSL/PKCS#11/path helpers), `prompt.go` (huh helpers).
@@ -316,6 +333,9 @@ card queries, binary autodetection, repo setup) and `secret_test.go`.
   refused with *"Certificate does not contain an authorized principal"*). Diagnosed with
   a throwaway `sshd -ddd` on a high port — the fastest way to get a reason out of macOS,
   whose unified log doesn't carry sshd's auth messages.
+- **`mintk web` — validated** in `agent` mode on WSL2 from the Windows browser (mint via
+  tap → cert in the agent → shown live), plus the request gate in `web_test.go`. See
+  [web.md](web.md).
 - **Not yet hardware-validated:** the token (PKCS#11) path — needs the
   YubiKey-on-this-machine in the loop (see [prerequisites.md](prerequisites.md)).
 - **Secret grants — validated:** the full lifecycle in `software` mode against a real `age`

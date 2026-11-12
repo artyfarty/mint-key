@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mintk</title>
+<link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <img src="/static/icon.svg" alt="" width="22" height="22">
+    <span class="brand-name">mintk</span>
+    <span id="host" class="muted"></span>
+  </div>
+  <div class="top-meta">
+    <span id="mode" class="badge" hidden></span>
+    <span id="conn" class="conn" title="connection to mintk web"></span>
+    <button id="lock" class="ghost small" title="End this session — the next visit needs a tap" hidden>Lock</button>
+  </div>
+</header>
+
+<div id="busy" class="busy" hidden>
+  <span class="pulse"></span>
+  <span id="busy-text"></span>
+</div>
+
+<div id="locked" class="locked" hidden>
+  <img src="/static/icon.svg" alt="" width="48" height="48">
+  <h1 id="lock-title">Locked</h1>
+  <p id="lock-text" class="muted">Tap your YubiKey to unlock.</p>
+  <div id="enroll-row" class="enroll-row" hidden>
+    <input id="enroll-name" placeholder="Name for this key, e.g. YubiKey blue" autocomplete="off" spellcheck="false">
+  </div>
+  <button id="unlock-btn" hidden>Unlock with YubiKey</button>
+  <p id="lock-error" class="lock-error" hidden></p>
+</div>
+
+<div id="config-error" class="banner error" hidden></div>
+<div id="notes"></div>
+
+<div id="app" hidden>
+  <section class="live-section">
+    <div class="section-head">
+      <h2>Live</h2>
+      <span id="live-count" class="muted"></span>
+    </div>
+    <div id="live-list" class="live-list"></div>
+  </section>
+
+  <div class="main-col">
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-tab="certs" aria-selected="true">Certs</button>
+    <button role="tab" data-tab="secrets">Secrets</button>
+    <button role="tab" data-tab="scopes">Manage scopes</button>
+    <button role="tab" data-tab="cleanup">Clean up</button>
+    <button role="tab" data-tab="keys">Keys</button>
+  </nav>
+
+  <main>
+    <section data-panel="certs">
+      <div class="toolbar">
+        <input id="filter" type="search" placeholder="Filter scopes — name, principal, group   ( / )" autocomplete="off" spellcheck="false">
+        <button id="expand-all" class="ghost">Expand all</button>
+        <button id="collapse-all" class="ghost">Collapse all</button>
+      </div>
+      <div id="cert-tree" class="tree"></div>
+      <p class="hint">Click <b>Mint</b> (or press Enter in a lifetime box) to sign with the scope's default lifetime or the one you typed.
+        With the filter narrowed to one scope, Enter mints it.</p>
+    </section>
+
+    <section data-panel="secrets" hidden>
+      <div id="secrets-body"></div>
+      <p class="hint">Creating and editing secrets stays in the terminal (<code>mintk secret edit &lt;name&gt;</code>) — plaintext never goes to the browser.</p>
+    </section>
+
+    <section data-panel="scopes" hidden>
+      <div class="forms">
+        <form id="add-scope" class="card form">
+          <h3>Add a scope</h3>
+          <label>Name <input name="scope" required autocomplete="off" spellcheck="false" placeholder="e.g. web-prod"></label>
+          <label>Principal <input name="principal" autocomplete="off" spellcheck="false" placeholder="defaults to the name"></label>
+          <label>Default lifetime <input name="ttl" value="8h" autocomplete="off" spellcheck="false"></label>
+          <label>Group <select name="group" class="group-select"></select></label>
+          <button type="submit">Add scope</button>
+        </form>
+        <form id="add-group" class="card form">
+          <h3>Add a group</h3>
+          <label>Path <input name="path" required autocomplete="off" spellcheck="false" placeholder="infra/prod"></label>
+          <button type="submit">Add group</button>
+          <p class="hint">A path creates the whole branch. Empty groups are kept in <code>groups:</code>.</p>
+        </form>
+      </div>
+      <div id="manage-tree" class="tree manage"></div>
+      <p class="hint">Changing a principal or deleting a scope stays in the terminal (<code>mintk scopes edit</code> / <code>delete</code>) — harder to hit by accident there.</p>
+    </section>
+
+    <section data-panel="cleanup" hidden>
+      <div class="card action-card">
+        <div>
+          <h3>Wipe minted identities</h3>
+          <p class="muted">Deletes every session key and cert in <span id="sessions-dir">sessions_dir</span>. The next mint re-creates the key (and asks for a tap).</p>
+        </div>
+        <button id="clean-keys" class="danger">Wipe</button>
+      </div>
+      <div class="card action-card" id="revoke-all-card">
+        <div>
+          <h3>Revoke all secret grants</h3>
+          <p class="muted" id="revoke-all-text">Wipes every live grant from tmpfs now instead of waiting for its TTL.</p>
+        </div>
+        <button id="revoke-all" class="danger">Revoke all</button>
+      </div>
+    </section>
+
+    <section data-panel="keys" hidden>
+      <div id="keys-list" class="tree keys"></div>
+      <form id="add-key" class="card form add-key">
+        <h3>Register another key</h3>
+        <label>Name <input name="keyname" placeholder="e.g. YubiKey backup" autocomplete="off" spellcheck="false"></label>
+        <button type="submit">Register — tap the new key</button>
+      </form>
+      <p class="hint">Login is a tap on any key listed here (WebAuthn / FIDO2, touch only — nothing is stored on the key, so no PIN and no key slots used).
+        The list lives in <code id="keys-file">web-credentials.json</code>. Lost every key? <code>mintk web enroll</code> prints a one-time link to register a new one.</p>
+    </section>
+  </main>
+  </div>
+
+  <section class="log">
+    <div class="section-head">
+      <h2>Activity</h2>
+      <button id="log-clear" class="ghost small">Clear</button>
+    </div>
+    <div id="log-list"></div>
+  </section>
+</div>
+
+<div id="toast" class="toast" hidden></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

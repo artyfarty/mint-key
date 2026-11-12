@@ -18,6 +18,7 @@ func main() {
 	}
 
 	root.AddCommand(interactiveCmd())
+	root.AddCommand(webCmd())
 	root.AddCommand(initCmd())
 	root.AddCommand(doctorCmd())
 	root.AddCommand(keyCmd())

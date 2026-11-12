@@ -246,3 +246,22 @@ func TestPreGroupScopesFileLoadsFlat(t *testing.T) {
 		t.Errorf("scopeIndexes(root) = %v, want both scopes", got)
 	}
 }
+
+func TestScopeOpsKeepHandEditedGroups(t *testing.T) {
+	cfg := &Config{Scopes: []Scope{{Name: "a", Principal: "p", TTL: "1h", Group: "odd group"}}}
+	if err := cfg.addScopeChecked("b", "p", "1h", "odd group"); err != nil {
+		t.Fatalf("existing hand-edited group refused: %v", err)
+	}
+	if err := cfg.addScopeChecked("c", "p", "1h", "new group"); err == nil {
+		t.Fatal("invalid new group accepted")
+	}
+	if err := cfg.moveScope("a", "infra/prod"); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.deleteGroupChecked("infra"); err == nil {
+		t.Fatal("non-empty group deleted")
+	}
+	if _, err := cfg.renameGroupChecked("infra", "infra/prod/x"); err == nil {
+		t.Fatal("moved a group into itself")
+	}
+}

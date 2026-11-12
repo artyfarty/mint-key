@@ -10,7 +10,8 @@ you add, rename, or remove docs.
 | [yubikey-piv-setup.md](yubikey-piv-setup.md) | Putting the CA private key on a YubiKey PIV slot (generate offline → import → policies → distribute `ca.pub` → seal backup), and the software-CA test mode. |
 | [prerequisites.md](prerequisites.md) | What must be installed/configured for `mintk` to work, per platform (token mode on Linux/macOS; the Windows+WSL agent path: minidriver, WinCryptSSHAgent, the agent bridge), host-side trust, gotchas. What `mintk doctor` checks. |
 | [new-device.md](new-device.md) | Step-by-step **onboarding of a new client device**: pick mode → install the binary → `mintk init` → `scopes pull` → `doctor` → first `mintk key` (→ optional `mintk secret init`). Per-platform notes, SSH-config hygiene, the multi-YubiKey gotcha, and the host-side pointer. |
-| [mintk-go-spec.md](mintk-go-spec.md) | **Design/build brief** for the `mintk` binary — YAML config in `~/.config/mint-key/`, cobra + huh, commands `interactive`/`key`/`secret`/`scopes (list/add/delete/edit)`/`clean`/`clean-keys`/`deploy`, the scope-group tree, plus the implementation status. |
+| [web.md](web.md) | **`mintk web`** — the browser UI: what it shows, how actions and YubiKey prompts run, the YubiKey (WebAuthn) login, the loopback/same-origin security model, what is deliberately CLI-only, and running it as a systemd user unit (`mintk web service`). |
+| [mintk-go-spec.md](mintk-go-spec.md) | **Design/build brief** for the `mintk` binary — YAML config in `~/.config/mint-key/`, cobra + huh, commands `interactive`/`web`/`key`/`secret`/`scopes (list/add/delete/edit)`/`clean`/`clean-keys`/`deploy`, the scope-group tree, plus the implementation status. |
 
 ## Conventions
 

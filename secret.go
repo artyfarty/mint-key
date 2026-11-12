@@ -168,12 +168,12 @@ func runSecretGrant(names []string, ttlOverride string) error {
 		return err
 	}
 	if len(jobs) > 1 {
-		fmt.Printf("%s: granting %d scopes in one burst — a `cached` touch policy serves them from one tap\n",
+		fmt.Fprintf(outW, "%s: granting %d scopes in one burst — a `cached` touch policy serves them from one tap\n",
 			prog, len(jobs))
 	}
 
 	for _, j := range jobs {
-		fmt.Printf("%s: granting %s  +%s  [YubiKey — PIN if needed + touch]\n", prog, j.name, j.ttl)
+		fmt.Fprintf(outW, "%s: granting %s  +%s  [YubiKey — PIN if needed + touch]\n", prog, j.name, j.ttl)
 		plain, err := client.decrypt(j.blob)
 		if err != nil {
 			printPINWarning()
@@ -191,7 +191,7 @@ func runSecretGrant(names []string, ttlOverride string) error {
 			sess.st.wipe(j.name, g.Serial)
 			return fmt.Errorf("%s: %w (grant destroyed — nothing would have expired it)", j.name, err)
 		}
-		fmt.Printf("       %s  expires %s  (%s wiper)\n",
+		fmt.Fprintf(outW, "       %s  expires %s  (%s wiper)\n",
 			sess.st.path(j.name), g.ExpiresAt.Format("15:04:05"), g.Wiper)
 	}
 	return nil
@@ -200,10 +200,10 @@ func runSecretGrant(names []string, ttlOverride string) error {
 // printPINWarning is shown on any decrypt failure: the PIV PIN is shared with
 // the CA slot, so blind retries are how you lock yourself out of both.
 func printPINWarning() {
-	fmt.Fprintf(os.Stderr, "\n%s: the decrypt failed and was NOT retried.\n", prog)
-	fmt.Fprintf(os.Stderr, "  The PIV PIN is applet-wide: three wrong entries block the applet, which also\n")
-	fmt.Fprintf(os.Stderr, "  kills `%s key` (the CA signing slot). Check the card is present and the PIN is\n", prog)
-	fmt.Fprintf(os.Stderr, "  right before trying again — see docs/secrets.md.\n")
+	fmt.Fprintf(errW, "\n%s: the decrypt failed and was NOT retried.\n", prog)
+	fmt.Fprintf(errW, "  The PIV PIN is applet-wide: three wrong entries block the applet, which also\n")
+	fmt.Fprintf(errW, "  kills `%s key` (the CA signing slot). Check the card is present and the PIN is\n", prog)
+	fmt.Fprintf(errW, "  right before trying again — see docs/secrets.md.\n")
 }
 
 // --- run ---------------------------------------------------------------------

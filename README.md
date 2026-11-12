@@ -88,6 +88,8 @@ an existing config (use `--force` to recreate).
 
 ```
 mintk interactive | mintk i          # menu: mint, grant a secret, manage scopes, clean up
+mintk web                            # the same in a browser on this machine (docs/web.md)
+mintk web service install            # …kept running as a systemd user unit; unlock with a YubiKey tap
 mintk init                           # bootstrap config (import CA from the YubiKey)
 mintk doctor                         # check prerequisites are in place
 mintk key <scope> [<ttl>]            # issue/refresh a cert for <scope> into the agent

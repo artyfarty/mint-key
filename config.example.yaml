@@ -132,3 +132,10 @@ secrets:
     - name: example-token
       ttl: 15m
       format: opaque    # opaque = only the file path is handed to the command
+
+# --- mintk web ----------------------------------------------------------------
+# The browser UI (docs/web.md). Loopback addresses only; --listen overrides.
+# Unlocked with a tap on a registered YubiKey (WebAuthn).
+# web:
+#   listen: localhost:7537
+#   session_ttl: 12h
