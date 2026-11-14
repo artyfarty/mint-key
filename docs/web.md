@@ -202,6 +202,16 @@ how a key gets added to the unit's server without a control channel. It's no new
 privilege: whoever can write that file can already edit `web-credentials.json`. A new
 `enroll` replaces an unused link, a registration consumes it, and a reboot clears it.
 
+**A unit has no Windows directories in `PATH`.** A login shell under WSL gets them
+(`appendWindowsPath`), and a systemd unit doesn't. So a bare `cmd.exe` fails there with
+"executable file not found". That broke the `wsl-windows` secret grant, which runs
+`cmd.exe` for the console decrypt, until every interop binary (`cmd.exe`, `where.exe`,
+`powershell.exe`, `explorer.exe`) started resolving through `winExe`: `PATH` first,
+then the Windows directory mapped with `wslpath -u`. `TestWinExeWithoutWindowsPath`
+pins this. `wslpath` itself works from a unit (`WSL_DISTRO_NAME` / `WSLENV` are empty
+there, and it doesn't need them). The `.bat` launcher sets the plugin's `PATH` on the
+Windows side, so `age-plugin-yubikey` is found either way.
+
 Validated on WSL2: from a unit, the agent socket answers (`ssh-add -l`) and Windows
 interop works (`cmd.exe`, which the `wsl-windows` secret grants need). The unit serves on
 both loopbacks. `mintk web` next to it just opens the browser, `enroll` reaches it, and

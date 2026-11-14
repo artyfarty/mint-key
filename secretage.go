@@ -372,7 +372,7 @@ func (a *ageClient) decryptViaConsole(blobPath string) ([]byte, error) {
 	}
 
 	fmt.Fprintf(outW, "%s: a console window is opening for the YubiKey prompt — answer it there\n", prog)
-	cmd := exec.Command("cmd.exe", "/c", batWin)
+	cmd := exec.Command(winExe("cmd.exe"), "/c", batWin)
 	cmd.Dir = "/mnt/c" // cmd.exe refuses a WSL working directory
 	var errb bytes.Buffer
 	cmd.Stderr = io.MultiWriter(errW, &errb)
@@ -422,7 +422,7 @@ func winTempDir() (string, error) {
 	if winTempDirCache != "" {
 		return winTempDirCache, nil
 	}
-	cmd := exec.Command("cmd.exe", "/c", "echo %TEMP%")
+	cmd := exec.Command(winExe("cmd.exe"), "/c", "echo %TEMP%")
 	cmd.Dir = "/mnt/c"
 	out, err := cmd.Output()
 	if err != nil {

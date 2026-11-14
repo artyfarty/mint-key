@@ -39,7 +39,7 @@ func runClean(cfg *Config) error {
 	psCmd := fmt.Sprintf(
 		"Get-ChildItem Cert:\\CurrentUser\\My | Where-Object { $_.Subject -like '*%s*' } | Remove-Item",
 		cfg.CACertCN)
-	if err := exec.Command("powershell.exe", "-NoProfile", "-Command", psCmd).Run(); err != nil {
+	if err := exec.Command(winExe("powershell.exe"), "-NoProfile", "-Command", psCmd).Run(); err != nil {
 		return fmt.Errorf("could not purge the cert store: %w", err)
 	}
 

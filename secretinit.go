@@ -664,7 +664,7 @@ func winUserProfile() string {
 	if !inWSL() {
 		return ""
 	}
-	cmd := exec.Command("cmd.exe", "/c", "echo %USERPROFILE%")
+	cmd := exec.Command(winExe("cmd.exe"), "/c", "echo %USERPROFILE%")
 	cmd.Dir = "/mnt/c" // avoid cmd.exe's "UNC paths are not supported" warning
 	out, err := cmd.Output()
 	if err != nil {
@@ -736,7 +736,7 @@ func winWhere(name string) []string {
 	if !inWSL() {
 		return nil
 	}
-	cmd := exec.Command("where.exe", name)
+	cmd := exec.Command(winExe("where.exe"), name)
 	cmd.Dir = "/mnt/c" // avoid cmd/where complaining about a UNC working directory
 	out, err := cmd.Output()
 	if err != nil {

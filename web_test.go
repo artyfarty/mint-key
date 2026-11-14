@@ -254,3 +254,17 @@ func TestEnrollTokenFile(t *testing.T) {
 		t.Fatal("closed window still accepts")
 	}
 }
+
+// A systemd unit has no Windows directories in PATH; the interop binaries must
+// still resolve (this is what broke secret grants from `mintk web service`).
+func TestWinExeWithoutWindowsPath(t *testing.T) {
+	if !inWSL() {
+		t.Skip("WSL only")
+	}
+	t.Setenv("PATH", "/usr/local/bin:/usr/bin:/bin")
+	for name := range winSystemExes {
+		if p := winExe(name); !filepath.IsAbs(p) || !isExecutable(p) {
+			t.Errorf("%s resolved to %q", name, p)
+		}
+	}
+}

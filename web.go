@@ -294,7 +294,7 @@ func openBrowser(url string) error {
 		} else {
 			// explorer.exe hands a URL to the default browser. (cmd.exe /c start
 			// would need quoting that doesn't survive the WSL→Windows boundary.)
-			cmd = exec.Command("explorer.exe", url)
+			cmd = exec.Command(winExe("explorer.exe"), url)
 		}
 	case runtime.GOOS == "darwin":
 		cmd = exec.Command("open", url)

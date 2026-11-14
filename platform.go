@@ -64,3 +64,31 @@ func toWin(p string) string {
 	}
 	return p
 }
+
+// winSystemExes are the Windows binaries mintk runs through interop, by their
+// usual place in the Windows directory.
+var winSystemExes = map[string]string{
+	"cmd.exe":        `C:\Windows\System32\cmd.exe`,
+	"where.exe":      `C:\Windows\System32\where.exe`,
+	"powershell.exe": `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`,
+	"explorer.exe":   `C:\Windows\explorer.exe`,
+}
+
+// winExe resolves one of winSystemExes without depending on PATH. A login shell
+// under WSL has the Windows directories in PATH (appendWindowsPath), but a systemd
+// unit — `mintk web service` — or a cron job does not, and a bare "cmd.exe" then
+// fails with "executable file not found". wslpath maps the Windows path through
+// whatever automount root this distro uses.
+func winExe(name string) string {
+	if p, err := exec.LookPath(name); err == nil {
+		return p
+	}
+	if win, ok := winSystemExes[name]; ok {
+		if out, err := exec.Command("wslpath", "-u", win).Output(); err == nil {
+			if p := strings.TrimSpace(string(out)); isExecutable(p) {
+				return p
+			}
+		}
+	}
+	return name // let exec report it as not found
+}
