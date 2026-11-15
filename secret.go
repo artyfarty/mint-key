@@ -556,13 +556,13 @@ func runSecretEdit(name string, push, allowEmpty bool) error {
 	work := filepath.Join(ws, name)
 	var before []byte
 	if fileExists(blobPath) {
-		fmt.Printf("%s: decrypting %s for editing  [YubiKey — PIN if needed + touch]\n", prog, name)
+		fmt.Fprintf(outW, "%s: decrypting %s for editing  [YubiKey — PIN if needed + touch]\n", prog, name)
 		if before, err = client.decrypt(blobPath); err != nil {
 			printPINWarning()
 			return err
 		}
 	} else {
-		fmt.Printf("%s: %s doesn't exist yet — creating it\n", prog, name)
+		fmt.Fprintf(outW, "%s: %s doesn't exist yet — creating it\n", prog, name)
 	}
 	if err := os.WriteFile(work, before, 0o600); err != nil {
 		return err
@@ -576,29 +576,29 @@ func runSecretEdit(name string, push, allowEmpty bool) error {
 		return err
 	}
 	if bytes.Equal(before, after) {
-		fmt.Printf("%s: unchanged — nothing re-encrypted\n", prog)
+		fmt.Fprintf(outW, "%s: unchanged — nothing re-encrypted\n", prog)
 		return nil
 	}
-	if len(bytes.TrimSpace(after)) == 0 && !allowEmpty {
-		return fmt.Errorf("refusing to store an empty secret (pass --allow-empty if that's intended)")
+	if len(bytes.TrimSpace(after)) == 0 {
+		if !allowEmpty {
+			return fmt.Errorf("refusing to store an empty secret (pass --allow-empty if that's intended)")
+		}
+		return sess.storeEmpty(name, blobPath, recipients, client, push)
 	}
+	return sess.storeSecret(name, after, push)
+}
 
-	ct, err := client.encrypt(after, recipients)
+// storeEmpty is the --allow-empty path, which storeSecret deliberately refuses.
+func (sess *secretSession) storeEmpty(name, blobPath string, recipients []string, client *ageClient, push bool) error {
+	ct, err := client.encrypt(nil, recipients)
 	if err != nil {
 		return err
 	}
 	if err := writeFileAtomic(blobPath, ct, 0o600); err != nil {
 		return err
 	}
-	fmt.Printf("%s: encrypted %s to %d recipient(s) → %s\n", prog, name, len(recipients), blobPath)
-
-	// A live grant now holds the *old* value; drop it so nothing serves a stale
-	// secret with a valid-looking deadline.
-	if _, ok := sess.st.live(name); ok {
-		sess.st.wipe(name, "")
-		fmt.Printf("%s: revoked the live grant for %s (its value just changed)\n", prog, name)
-	}
-
+	sess.st.wipe(name, "")
+	fmt.Fprintf(outW, "%s: stored an empty %s → %s\n", prog, name, blobPath)
 	return sess.commitBlob(blobPath, fmt.Sprintf("mintk: update secret %s", name), push)
 }
 
@@ -782,12 +782,7 @@ func secretRmCmd() *cobra.Command {
 					return nil
 				}
 			}
-			sess.st.wipe(name, "")
-			if err := os.Remove(blobPath); err != nil {
-				return err
-			}
-			fmt.Printf("%s: removed %s\n", prog, blobPath)
-			return sess.commitBlob(blobPath, fmt.Sprintf("mintk: remove secret %s", name), push)
+			return sess.removeSecret(name, push)
 		},
 	}
 	cmd.Flags().BoolVar(&push, "push", false, "git push after committing")
@@ -814,21 +809,21 @@ func (sess *secretSession) gitDir() (string, error) {
 func (sess *secretSession) commitBlob(blobPath, msg string, push bool) error {
 	dir, err := sess.gitDir()
 	if err != nil {
-		fmt.Printf("%s: note — %s; blob written but not committed\n", prog, err)
+		fmt.Fprintf(outW, "%s: note — %s; blob written but not committed\n", prog, err)
 		return nil
 	}
 	if err := run("git", "-C", dir, "add", "--", blobPath); err != nil {
 		return err
 	}
 	if exec.Command("git", "-C", dir, "diff", "--cached", "--quiet", "--", blobPath).Run() == nil {
-		fmt.Printf("%s: nothing to commit (blob unchanged)\n", prog)
+		fmt.Fprintf(outW, "%s: nothing to commit (blob unchanged)\n", prog)
 		return nil
 	}
 	if err := run("git", "-C", dir, "commit", "-m", msg, "--", blobPath); err != nil {
 		return err
 	}
 	if push {
-		fmt.Printf("%s: git push in %s\n", prog, dir)
+		fmt.Fprintf(outW, "%s: git push in %s\n", prog, dir)
 		return run("git", "-C", dir, "push")
 	}
 	return nil

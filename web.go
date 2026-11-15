@@ -367,6 +367,9 @@ func (s *webServer) handler() http.Handler {
 	mux.HandleFunc("POST /api/revoke", s.api(s.apiRevoke))
 	mux.HandleFunc("POST /api/clean-keys", s.api(s.apiCleanKeys))
 	mux.HandleFunc("POST /api/revoke-all", s.api(s.apiRevokeAll))
+	mux.HandleFunc("POST /api/secrets/store", s.api(s.apiSecretStore))
+	mux.HandleFunc("POST /api/secrets/policy", s.api(s.apiSecretPolicy))
+	mux.HandleFunc("POST /api/secrets/delete", s.api(s.apiSecretDelete))
 	mux.HandleFunc("POST /api/scopes/add", s.api(s.apiScopeAdd))
 	mux.HandleFunc("POST /api/scopes/update", s.api(s.apiScopeUpdate))
 	mux.HandleFunc("POST /api/groups/add", s.api(s.apiGroupAdd))
@@ -666,6 +669,146 @@ func (s *webServer) apiRevokeAll(r *http.Request) (any, int) {
 	})
 }
 
+// --- secret management (write-only) -----------------------------------------
+//
+// The browser can create a secret, replace its value, change its policy and
+// delete it — but never read a value back: nothing here decrypts. Storing needs
+// no YubiKey (blobs are encrypted to the public recipients), so these calls
+// don't ask for a tap either. The value is only ever in this request's memory
+// and on age's stdin; it is never logged (the transcript carries names only).
+
+type secretStoreReq struct {
+	Name   string `json:"name"`
+	Value  string `json:"value"`
+	Format string `json:"format"` // only on create; "" keeps the current one
+	TTL    string `json:"ttl"`    // only on create; "" = the global default
+	Create bool   `json:"create"` // refuse to overwrite an existing secret
+	Push   bool   `json:"push"`
+}
+
+func (s *webServer) apiSecretStore(r *http.Request) (any, int) {
+	var req secretStoreReq
+	if err := decodeJSON(r, &req); err != nil {
+		return fail(http.StatusBadRequest, "%s", err)
+	}
+	req.Name = strings.TrimSpace(req.Name)
+	verb := "replace value of"
+	if req.Create {
+		verb = "add secret"
+	}
+	return s.action(verb+" "+req.Name, func() error {
+		sess, err := openSecrets()
+		if err != nil {
+			return err
+		}
+		if err := validScopeName(req.Name); err != nil {
+			return err
+		}
+		blob, err := sess.sec.blobPath(req.Name)
+		if err != nil {
+			return err
+		}
+		exists := fileExists(blob)
+		if req.Create && exists {
+			return fmt.Errorf("secret %q already exists — replace its value instead", req.Name)
+		}
+		if !req.Create && !exists {
+			return fmt.Errorf("no secret %q", req.Name)
+		}
+		format := sess.sec.scopeFormat(req.Name)
+		if req.Create && req.Format != "" {
+			if !validSecretFormat(req.Format) {
+				return fmt.Errorf("format must be one of %s", strings.Join(secretFormats, ", "))
+			}
+			format = req.Format
+		}
+		if req.Create && req.TTL != "" {
+			if _, err := parseTTL(req.TTL); err != nil {
+				return err
+			}
+		}
+		// An env secret that `secret run` couldn't parse is a broken secret.
+		if format == "env" {
+			if _, err := parseDotenv(req.Value); err != nil {
+				return fmt.Errorf("format is env, but the value isn't KEY=VALUE lines: %w", err)
+			}
+		}
+		value := req.Value
+		if !strings.HasSuffix(value, "\n") {
+			value += "\n"
+		}
+		if err := sess.storeSecret(req.Name, []byte(value), req.Push); err != nil {
+			return err
+		}
+		if req.Create && (req.Format == "env" || req.TTL != "") {
+			var f *string
+			if req.Format == "env" {
+				f = ptr("env")
+			}
+			var ttl *string
+			if req.TTL != "" {
+				ttl = ptr(req.TTL)
+			}
+			if err := setSecretPolicy(sess.cfg, req.Name, ttl, f); err != nil {
+				return err
+			}
+			fmt.Fprintf(outW, "%s: %s format=%s ttl=%s (saved %s)\n", prog, req.Name, format,
+				orDefault(req.TTL, sess.sec.DefaultTTL), sess.cfg.path)
+		}
+		return nil
+	})
+}
+
+func (s *webServer) apiSecretPolicy(r *http.Request) (any, int) {
+	var req struct {
+		Name   string  `json:"name"`
+		TTL    *string `json:"ttl"`
+		Format *string `json:"format"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		return fail(http.StatusBadRequest, "%s", err)
+	}
+	return s.action("update secret "+req.Name, func() error {
+		sess, err := openSecrets()
+		if err != nil {
+			return err
+		}
+		blob, err := sess.sec.blobPath(req.Name)
+		if err != nil {
+			return err
+		}
+		if !fileExists(blob) {
+			return fmt.Errorf("no secret %q", req.Name)
+		}
+		if req.Format != nil && *req.Format == "opaque" {
+			req.Format = ptr("") // opaque is the default; don't pin it
+		}
+		if err := setSecretPolicy(sess.cfg, req.Name, req.TTL, req.Format); err != nil {
+			return err
+		}
+		fmt.Fprintf(outW, "%s: %s ttl=%s format=%s (saved %s)\n", prog, req.Name,
+			sess.sec.scopeTTL(req.Name), sess.sec.scopeFormat(req.Name), sess.cfg.path)
+		return nil
+	})
+}
+
+func (s *webServer) apiSecretDelete(r *http.Request) (any, int) {
+	var req struct {
+		Name string `json:"name"`
+		Push bool   `json:"push"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		return fail(http.StatusBadRequest, "%s", err)
+	}
+	return s.action("delete secret "+req.Name, func() error {
+		sess, err := openSecrets()
+		if err != nil {
+			return err
+		}
+		return sess.removeSecret(req.Name, req.Push)
+	})
+}
+
 func (s *webServer) apiCleanKeys(r *http.Request) (any, int) {
 	return s.action("wipe minted identities", func() error {
 		cfg, err := loadConfig()
@@ -828,14 +971,16 @@ type webScope struct {
 }
 
 type webSecrets struct {
-	Enabled bool             `json:"enabled"`
-	Error   string           `json:"error,omitempty"`
-	Scopes  []webSecretScope `json:"scopes"`
+	Enabled    bool             `json:"enabled"`
+	Error      string           `json:"error,omitempty"`
+	DefaultTTL string           `json:"default_ttl,omitempty"`
+	Scopes     []webSecretScope `json:"scopes"`
 }
 
 type webSecretScope struct {
 	Name    string `json:"name"`
 	TTL     string `json:"ttl"`
+	TTLSet  bool   `json:"ttl_set"` // a per-secret ttl, not the global default
 	Format  string `json:"format"`
 	From    int64  `json:"from,omitempty"`
 	Expires int64  `json:"expires,omitempty"`
@@ -888,8 +1033,12 @@ func (s *webServer) apiState(r *http.Request) (any, int) {
 		return st, http.StatusOK
 	}
 	st.Secrets.Enabled = true
+	st.Secrets.DefaultTTL = sess.sec.DefaultTTL
 	for _, n := range sess.sec.listSecretScopes() {
 		ss := webSecretScope{Name: n, TTL: sess.sec.scopeTTL(n), Format: sess.sec.scopeFormat(n)}
+		if sc, ok := sess.sec.scope(n); ok && sc.TTL != "" {
+			ss.TTLSet = true
+		}
 		if g, ok := sess.st.live(n); ok {
 			ss.From, ss.Expires = g.GrantedAt.UnixMilli(), g.ExpiresAt.UnixMilli()
 		}

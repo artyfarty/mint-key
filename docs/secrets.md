@@ -162,6 +162,21 @@ zeroed before being unlinked — on tmpfs that rewrites the actual pages.
 Editing a scope that is currently granted **revokes the grant**, since the live plaintext
 is now a stale value with a valid-looking deadline.
 
+**Storing needs no card.** Encryption is to the recipients' public keys; only decryption
+touches the YubiKey. So creating a secret, and replacing a value without looking at the
+old one, are tap-free. The menus build on that:
+
+- **`mintk i` → Manage secrets.** Per secret: edit the value in `$EDITOR` (decrypts, so
+  a tap), set the default grant time, set the format (`env` / `opaque`), delete. *Add*
+  creates a secret through `$EDITOR`, with no tap.
+- **`mintk web` → Secrets.** The same, **write-only**: add a secret, replace a value,
+  change its policy, delete it. Nothing there decrypts, so no plaintext ever reaches the
+  browser. See [web.md](web.md#secret-management-write-only).
+
+A per-secret default grant time and format live in the local config under
+`secrets.scopes`. Clearing one falls back to `secrets.default_ttl` / `opaque`, and an
+entry left empty is dropped. `secret rm` drops it too.
+
 ## Commands
 
 ```

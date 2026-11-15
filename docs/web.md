@@ -34,7 +34,11 @@ It runs in the foreground until Ctrl-C, or as a systemd user unit; see
   principals and group paths. When only one scope matches, Enter mints it. Groups
   collapse with a click, and the collapsed set is remembered per browser.
 - **Secrets**: the secret scopes with their grant state. *Grant* / *Revoke* / per-grant
-  lifetime work the same way as on the Certs tab.
+  lifetime work the same way as on the Certs tab. Secrets are also **managed** here,
+  write-only (see [Secret management](#secret-management-write-only)). *Add a secret*
+  takes a name, format, default grant time and value. *Edit* on a row opens its default
+  grant time and format, *Replace* (a new value), and *Delete*. A tab-wide toggle runs
+  `git push` after each change.
 - **Manage scopes**: add a scope or a group, change a scope's default lifetime, move a
   scope to another group, rename/move a group, delete an empty group. Every change is
   written straight to the scopes file (or the config), as `mintk i` does.
@@ -49,9 +53,9 @@ tabs can be open: a running action shows up as a banner in all of them.
 
 ### Deliberately not in the browser
 
-- **Creating or editing secrets.** That needs the plaintext. In the terminal it goes
-  `$EDITOR` → tmpfs. In a browser it would sit in the page's memory, the DOM and maybe a
-  form-restore cache. `mintk secret edit <name>` stays the only way.
+- **Reading a secret's value.** Nothing in the web UI decrypts. A value can be set or
+  replaced, never shown, so editing in place (`mintk secret edit <name>`: decrypt into
+  `$EDITOR` on tmpfs) stays in the terminal.
 - **Changing a principal or deleting a scope.** Same rule as `mintk i`: those stay in
   `mintk scopes edit` / `delete`, where they're harder to hit by accident. The API has no
   field for them, and an unknown field is a 400.
@@ -60,6 +64,46 @@ tabs can be open: a running action shows up as a banner in all of them.
 
 - **Forget** (*×* on a cert): `ssh-add -d` the scope's key, then delete its key, `.pub`
   and cert. This is the per-scope version of `clean-keys`.
+
+## Secret management (write-only)
+
+Storing a secret needs **no card**: the blob is encrypted to the configured
+*recipients*, which are public keys. Only reading one back (a grant, or `secret edit`
+of an existing secret) decrypts, and that is the step that needs the YubiKey. So the
+browser can create, replace, re-configure and delete secrets without ever receiving a
+plaintext, and without a tap.
+
+- **Add / Replace** (`/api/secrets/store`). The value goes from the page to the server
+  in the request body, then onto `age --encrypt`'s stdin. It is never written to disk
+  unencrypted and never logged: the Activity transcript and the journal carry names
+  only, and a test checks that. The blob is replaced atomically, a live grant of the
+  old value is revoked, and the blob is committed (`mintk: add secret …` /
+  `update secret …`), plus a push when the toggle is on. An `env` secret must parse as
+  `KEY=VALUE` lines, the same parser `secret run` uses, and an empty value is refused.
+  A trailing newline is added if missing. *Add* refuses an existing name and *Replace*
+  a missing one, so neither can clobber the other.
+- **Policy** (`/api/secrets/policy`): the default grant time and the format, kept in the
+  local config under `secrets.scopes`. Empty means "the global default"
+  (`secrets.default_ttl`; format `opaque`), and an entry left with nothing in it is
+  dropped.
+- **Delete** (`/api/secrets/delete`): revokes a live grant, removes the blob, commits
+  the removal and drops the policy entry. The blob stays in the git history, as with
+  `mintk secret rm`.
+
+On the page:
+- The value fields are masked like a password field until *Show* is ticked
+  (`-webkit-text-security`).
+- Autofill and spellcheck are off, and password managers are told to ignore the
+  fields.
+- A typed value lives only in the tab's memory until it's sent, and it is cleared on
+  success and on *Lock*.
+- The browser still holds what you type while you type it. That's the accepted cost
+  of entering a secret through a page, compared with `$EDITOR` in a terminal.
+
+The same core (`secretops.go`: `storeSecret`, `removeSecret`, `setSecretPolicy`) backs
+`mintk secret edit` / `rm` and the new **`mintk i` → Manage secrets** menu. There, a
+secret's submenu edits the value in `$EDITOR` (decrypts: YubiKey), sets the default
+grant time and format, or deletes it, and *Add* creates one through `$EDITOR` (no tap).
 
 ## How actions run
 
@@ -242,6 +286,12 @@ listener through localhost forwarding. A mint from the page goes through the Yub
 and the cert lands in the agent and shows up in Live. The YubiKey login works on the same setup: enrollment through
 the one-time link from the Windows browser (via `localhost` forwarding into WSL)
 registers an ES256 FIDO2 credential, and later visits unlock with a tap (the signature counter advances on each login).
+
+`websecrets_test.go` drives secret management through the API against a real `age` and
+a real git repo: add (env, own ttl) → the blob decrypts to the value and is committed,
+and the value appears in neither the transcript nor the state → five refusals (create
+twice, replace absent, non-KEY=VALUE env, empty, bad name) → replace → policy reset
+(the entry is dropped) → bad ttl refused → delete (blob gone, removal committed).
 
 `web_test.go` covers the request gate (every row of the table above), the 409-while-busy
 refusal and scope edits through the API. `webauthn_test.go` runs enrollment and login

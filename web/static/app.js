@@ -132,6 +132,7 @@ function showLocked(locked) {
   $('#app').hidden = locked;
   $('#lock').hidden = locked;
   if (locked) {
+    forgetSecretDrafts();
     $('#busy').hidden = true;
     $('#config-error').hidden = true;
     $('#notes').replaceChildren();
@@ -618,20 +619,24 @@ function renderCertTree() {
 function renderSecrets() {
   const body = $('#secrets-body');
   const sec = S.secrets || {};
+  $('#secrets-manage').hidden = !sec.enabled;
   if (!sec.enabled) {
     body.replaceChildren(h('div', { class: 'banner note', text: sec.error
       ? `Secret grants are unavailable: ${sec.error}`
       : 'Secret grants are not configured (no secrets: section in the config). See docs/secrets.md.' }));
     return;
   }
+  const ttlInput = $('#add-secret-ttl');
+  ttlInput.placeholder = `${sec.default_ttl} (the default)`;
   if (!sec.scopes.length) {
-    body.replaceChildren(h('div', { class: 'banner note', text: 'No secrets yet. Create one in the terminal: mintk secret edit <name>' }));
+    body.replaceChildren(h('div', { class: 'banner note', text: 'No secrets yet — add one below.' }));
     return;
   }
   const list = h('div', { class: 'tree secret-list' });
   for (const s of sec.scopes) {
     const live = isLive(s);
-    list.append(h('div', { class: 'trow' + (live ? ' live' : ''), 'data-row-exp': s.expires || '', 'data-row-from': s.from || '' },
+    const open = secretEditors.has(s.name);
+    list.append(h('div', { class: 'trow' + (live ? ' live' : '') + (open ? ' editing' : ''), 'data-row-exp': s.expires || '', 'data-row-from': s.from || '' },
       h('span', { class: 'dot' }),
       h('span', { class: 'name', text: s.name }),
       h('span', { class: 'principal', text: s.format }),
@@ -644,9 +649,95 @@ function renderSecrets() {
       }),
       h('span', { class: 'actions' },
         h('button', { text: live ? 'Re-grant' : 'Grant', disabled: busyNow(), onclick: () => grant(s) }),
-        live ? h('button', { class: 'icon', text: '×', title: 'Revoke now', disabled: busyNow(), onclick: () => revoke(s) }) : h('span'))));
+        live ? h('button', { class: 'icon', text: '×', title: 'Revoke now', disabled: busyNow(), onclick: () => revoke(s) }) : h('span')),
+      h('button', {
+        class: 'ghost small edit-toggle', text: open ? 'Close' : 'Edit', 'aria-expanded': String(open),
+        onclick: () => { if (open) closeSecretEditor(s.name); else secretEditors.add(s.name); renderedKey = ''; render(); },
+      })));
+    if (open) list.append(secretEditor(s, sec));
   }
   body.replaceChildren(list);
+}
+
+// --- secret management (write-only) -----------------------------------------
+
+const secretEditors = new Set();       // names whose editor panel is open
+const secretValueDraft = new Map();    // name → replacement value being typed
+const secretPolicyDraft = new Map();   // name → {ttl, format} being edited
+
+function closeSecretEditor(name) {
+  secretEditors.delete(name);
+  secretValueDraft.delete(name);
+  secretPolicyDraft.delete(name);
+}
+
+// forgetSecretDrafts drops every typed value — on lock, nothing typed survives.
+function forgetSecretDrafts() {
+  secretEditors.clear();
+  secretValueDraft.clear();
+  secretPolicyDraft.clear();
+  const f = $('#add-secret');
+  if (f) f.value.value = '';
+}
+
+const secretPush = () => $('#secret-push').checked;
+
+function maskToggle(textarea) {
+  return h('label', { class: 'check' },
+    h('input', { type: 'checkbox', onchange: (e) => textarea.classList.toggle('masked', !e.target.checked) }),
+    ' Show');
+}
+
+function secretEditor(s, sec) {
+  const pol = secretPolicyDraft.get(s.name) || { ttl: s.ttl_set ? s.ttl : '', format: s.format };
+  const setPol = (k, v) => { secretPolicyDraft.set(s.name, { ...pol, [k]: v }); pol[k] = v; };
+
+  const ttl = h('input', {
+    class: 'ttl', value: pol.ttl, placeholder: `${sec.default_ttl} (default)`, 'data-fk': `sttl:${s.name}`,
+    spellcheck: 'false', autocomplete: 'off', oninput: (e) => setPol('ttl', e.target.value),
+  });
+  const format = h('select', { 'data-fk': `sfmt:${s.name}`, onchange: (e) => setPol('format', e.target.value) },
+    h('option', { value: 'opaque', text: 'opaque', selected: pol.format !== 'env' }),
+    h('option', { value: 'env', text: 'env', selected: pol.format === 'env' }));
+  const savePolicy = async () => {
+    const ok = await runAction(`${s.name}: ttl ${pol.ttl || 'default'}, ${pol.format}`, '/api/secrets/policy',
+      { name: s.name, ttl: pol.ttl.trim(), format: pol.format });
+    if (ok) secretPolicyDraft.delete(s.name);
+  };
+
+  const value = h('textarea', {
+    class: 'secret-input masked', rows: '3', 'data-fk': `sval:${s.name}`,
+    autocomplete: 'off', autocorrect: 'off', autocapitalize: 'off', spellcheck: 'false', 'data-lpignore': 'true', 'data-1p-ignore': '',
+    placeholder: s.format === 'env' ? 'KEY=VALUE lines — replaces the whole secret' : 'the new value — replaces the old one',
+    oninput: (e) => secretValueDraft.set(s.name, e.target.value),
+  });
+  value.value = secretValueDraft.get(s.name) || '';
+  const replace = async () => {
+    const v = secretValueDraft.get(s.name) || '';
+    if (!v.trim()) { toast('Type the new value first', true); return; }
+    const live = isLive(s) ? ' Its live grant will be revoked.' : '';
+    if (!confirm(`Replace the value of ${s.name}? The old one can't be shown here to compare.${live}`)) return;
+    const ok = await runAction(`replace value of ${s.name}`, '/api/secrets/store', { name: s.name, value: v, push: secretPush() });
+    if (ok) secretValueDraft.delete(s.name);
+  };
+  const del = () => {
+    if (!confirm(`Delete secret ${s.name}? A live grant is revoked; the blob stays in the git history.`)) return;
+    runAction(`delete secret ${s.name}`, '/api/secrets/delete', { name: s.name, push: secretPush() })
+      .then((ok) => { if (ok) closeSecretEditor(s.name); });
+  };
+
+  return h('div', { class: 'secret-editor' },
+    h('div', { class: 'ed-row' },
+      h('label', {}, 'Default grant time', ttl),
+      h('label', {}, 'Format', format),
+      h('button', { class: 'ghost', text: 'Save', disabled: busyNow(), onclick: savePolicy })),
+    h('div', { class: 'ed-row value-row' },
+      h('label', { class: 'value-label' }, 'Replace the value (write-only — the current one is never shown)', value),
+      h('div', { class: 'ed-col' },
+        maskToggle(value),
+        h('button', { text: 'Replace', disabled: busyNow(), onclick: replace }))),
+    h('div', { class: 'ed-row end' },
+      h('button', { class: 'danger small', text: 'Delete secret', disabled: busyNow(), onclick: del })));
 }
 
 // --- manage -----------------------------------------------------------------
@@ -855,6 +946,22 @@ function init() {
   $('#unlock-btn').addEventListener('click', () => (authMode === 'enroll' ? enrollFirst() : unlock()));
   $('#enroll-name').addEventListener('keydown', (e) => { if (e.key === 'Enter') enrollFirst(); });
   $('#lock').addEventListener('click', lockNow);
+
+  const push = $('#secret-push');
+  push.checked = store.get('mintk.secretPush', false);
+  push.addEventListener('change', () => store.set('mintk.secretPush', push.checked));
+  const addSecret = $('#add-secret');
+  addSecret.querySelector('.show-value').addEventListener('change', (e) => addSecret.value.classList.toggle('masked', !e.target.checked));
+  addSecret.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const f = e.target;
+    const name = f.secretname.value.trim();
+    if (!f.value.value.trim()) { toast('Type the value first', true); return; }
+    const ok = await runAction(`add secret ${name}`, '/api/secrets/store', {
+      name, value: f.value.value, format: f.format.value, ttl: f.ttl.value.trim(), create: true, push: secretPush(),
+    });
+    if (ok) { f.secretname.value = ''; f.value.value = ''; f.ttl.value = ''; f.format.value = 'opaque'; }
+  });
   $('#add-key').addEventListener('submit', async (e) => {
     e.preventDefault();
     const f = e.target;

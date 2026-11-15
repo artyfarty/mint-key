@@ -62,6 +62,10 @@ func runInteractive() error {
 				label: fmt.Sprintf("Grant a secret       %s", grantSummaryLine(sess)),
 				run:   func() error { return interactiveGrant(sess) },
 			})
+			actions = append(actions, action{
+				label: "Manage secrets       add, edit, default grant time, format, delete",
+				run:   interactiveSecrets,
+			})
 		}
 		actions = append(actions, action{
 			label: fmt.Sprintf("Manage scopes        %s", scopesSummaryLine(cfg)),
@@ -235,6 +239,153 @@ func interactiveGrant(sess *secretSession) error {
 		return nil
 	}
 	return runSecretGrant([]string{name}, ttl)
+}
+
+// --- manage secrets ----------------------------------------------------------
+
+// interactiveSecrets is the secret editor: pick a secret for its submenu, or add
+// one. The session is reopened on every pass so a change shows up at once.
+func interactiveSecrets() error {
+	for {
+		sess, err := openSecrets()
+		if err != nil {
+			return err
+		}
+		names := sess.sec.listSecretScopes()
+		var opts []string
+		for _, n := range names {
+			opts = append(opts, secretMenuLine(sess, n))
+		}
+		add := len(opts)
+		opts = append(opts, "[+] Add a new secret")
+		back := len(opts)
+		opts = append(opts, "[<] Back")
+
+		idx, err := promptChoice(fmt.Sprintf("Secrets  (default grant time %s)", sess.sec.DefaultTTL), opts)
+		if err != nil || idx == back {
+			return nil
+		}
+		if idx == add {
+			err = interactiveSecretAdd(sess)
+		} else {
+			err = interactiveSecretEdit(names[idx])
+		}
+		if err != nil {
+			fmt.Printf("%s: %s\n", prog, err)
+		}
+	}
+}
+
+func secretMenuLine(sess *secretSession, name string) string {
+	state := "—"
+	if g, ok := sess.st.live(name); ok {
+		state = "granted " + shortDuration(g.remaining())
+	}
+	return fmt.Sprintf("%-18s ttl=%-6s %-7s %s", name, sess.sec.scopeTTL(name), sess.sec.scopeFormat(name), state)
+}
+
+// interactiveSecretAdd creates a secret: name, format, then the value in $EDITOR
+// (on tmpfs — a new secret needs no YubiKey, only the recipients).
+func interactiveSecretAdd(sess *secretSession) error {
+	name, err := promptString("Name for the new secret", "")
+	if err != nil {
+		return nil
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
+	if err := validScopeName(name); err != nil {
+		return err
+	}
+	if p, err := sess.sec.blobPath(name); err == nil && fileExists(p) {
+		return fmt.Errorf("secret %q already exists — pick it from the list to edit", name)
+	}
+	f, err := promptChoice("Format — how `secret run` hands it over", []string{
+		"opaque  the command gets the file path",
+		"env     KEY=VALUE lines, injected as environment variables",
+	})
+	if err != nil {
+		return nil
+	}
+	if err := runSecretEdit(name, false, false); err != nil {
+		return err
+	}
+	if f == 1 {
+		cfg, err := loadConfig()
+		if err != nil {
+			return err
+		}
+		return setSecretPolicy(cfg, name, nil, ptr("env"))
+	}
+	return nil
+}
+
+// interactiveSecretEdit is one secret's submenu. Every change is saved as it's
+// made, like the scope editor.
+func interactiveSecretEdit(name string) error {
+	for {
+		sess, err := openSecrets()
+		if err != nil {
+			return err
+		}
+		ttlLabel := "Default grant time: " + sess.sec.scopeTTL(name)
+		if sc, ok := sess.sec.scope(name); !ok || sc.TTL == "" {
+			ttlLabel += "  (the global default)"
+		}
+		opts := []string{
+			"Edit the value in $EDITOR  (decrypts — YubiKey)",
+			ttlLabel,
+			"Format: " + sess.sec.scopeFormat(name),
+			"Delete this secret",
+			"[<] Back",
+		}
+		idx, err := promptChoice(secretMenuLine(sess, name), opts)
+		if err != nil || idx == 4 {
+			return nil
+		}
+		switch idx {
+		case 0:
+			if err := runSecretEdit(name, false, false); err != nil {
+				fmt.Printf("%s: %s\n", prog, err)
+			}
+		case 1:
+			v, err := promptString(fmt.Sprintf("Default grant time for %s (e.g. 1h, 30m; empty = global default %s)", name, sess.sec.DefaultTTL), sess.sec.scopeTTL(name))
+			if err != nil {
+				continue
+			}
+			if err := setSecretPolicy(sess.cfg, name, ptr(v), nil); err != nil {
+				fmt.Printf("%s: %s\n", prog, err)
+				continue
+			}
+			fmt.Printf("%s: %s default grant time → %s (saved %s)\n", prog, name, orDefault(strings.TrimSpace(v), sess.sec.DefaultTTL), sess.cfg.path)
+		case 2:
+			def := 0
+			if sess.sec.scopeFormat(name) == "env" {
+				def = 1
+			}
+			f, err := promptChoiceDefault("Format for "+name, []string{"opaque", "env"}, def)
+			if err != nil {
+				continue
+			}
+			if err := setSecretPolicy(sess.cfg, name, nil, ptr([]string{"", "env"}[f])); err != nil {
+				fmt.Printf("%s: %s\n", prog, err)
+			}
+		case 3:
+			ok, _ := promptYesNo(fmt.Sprintf("Delete secret %s? (revokes a live grant; the blob stays in git history)", name), false)
+			if !ok {
+				continue
+			}
+			return sess.removeSecret(name, false)
+		}
+	}
+}
+
+func orDefault(v, def string) string {
+	if v == "" {
+		return def + " (default)"
+	}
+	return v
 }
 
 // --- manage scopes -----------------------------------------------------------

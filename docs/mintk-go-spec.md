@@ -79,7 +79,8 @@ repo if given a URL). Refuses to clobber an existing config without `--force`.
 Menu-driven front end over the commands below, for the day-to-day loop: **mint a cert**
 (pick a scope → lifetime), **grant a secret** (pick a scope → lifetime, or create a new one
 via `secret edit`), **manage scopes** (add a scope, or change a scope's default mint time),
-and **clean up** (wipe `sessions_dir`, revoke live grants). Every entry shows what is
+**manage secrets** (add, edit the value in `$EDITOR`, default grant time, format,
+delete), and **clean up** (wipe `sessions_dir`, revoke live grants). Every entry shows what is
 currently live and how long it has left — a minted cert's remaining time is read back from
 `ssh-keygen -L`, a grant's from its record. The config is reloaded on each pass, so
 something created in one action shows up in the next. The secret entries are simply absent
@@ -115,7 +116,8 @@ YubiKey (WebAuthn, non-resident credential, no PIN; the first key enrolled throu
 one-time link from the terminal), same-origin-only API (no CORS, Host check against DNS
 rebinding). `mintk web enroll` issues a registration link (it works against a running
 server), and `mintk web service install|uninstall|status` runs the UI as a systemd user
-unit. Creating/editing
+unit. Secrets are managed write-only: add, replace, default grant time,
+format and delete. Nothing in the browser decrypts, and storing needs no tap. Creating/editing
 secrets, principal edits and scope deletion stay in the CLI. Full design and threat
 model: [web.md](web.md).
 
@@ -307,7 +309,8 @@ unit-tested in `groups_test.go`, including both directions of the pre-groups rou
 `clean.go`, `cleankeys.go` (`mintk clean-keys` — wipe `sessions_dir` with confirm/`-y`),
 `web.go` + `web/` (`mintk web`: the HTTP server, request gate and API, the embedded
 page; tested in `web_test.go`), `webauthn.go` (the YubiKey login: WebAuthn verification
-on the standard library, the key store, sessions; tested in `webauthn_test.go`), `webservice.go` (the systemd user unit), `output.go` (the `outW`/`errW` streams the action code
+on the standard library, the key store, sessions; tested in `webauthn_test.go`), `webservice.go` (the systemd user unit), `secretops.go` (store / remove / policy for secrets, shared by the CLI, `mintk i`
+and `mintk web`; tested end-to-end in `websecrets_test.go`), `output.go` (the `outW`/`errW` streams the action code
 writes to, so the web server can capture a transcript), `scopeops.go` (the validated
 scope/group edits shared by `mintk i` and `mintk web`),
 `deploy.go` (ships an idempotent trust script over one `ssh -t` connection as a here-doc,

@@ -72,7 +72,24 @@
 
     <section data-panel="secrets" hidden>
       <div id="secrets-body"></div>
-      <p class="hint">Creating and editing secrets stays in the terminal (<code>mintk secret edit &lt;name&gt;</code>) — plaintext never goes to the browser.</p>
+      <div id="secrets-manage">
+        <form id="add-secret" class="card form add-secret">
+          <h3>Add a secret</h3>
+          <label>Name <input name="secretname" required autocomplete="off" spellcheck="false" placeholder="e.g. db-prod"></label>
+          <label>Format <select name="format"><option value="opaque">opaque — the command gets the file path</option><option value="env">env — KEY=VALUE lines, injected as env vars</option></select></label>
+          <label>Default grant time <input name="ttl" autocomplete="off" spellcheck="false" id="add-secret-ttl"></label>
+          <label class="value-label">Value
+            <textarea name="value" class="secret-input masked" rows="3" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore></textarea>
+          </label>
+          <div class="form-row">
+            <label class="check"><input type="checkbox" class="show-value"> Show</label>
+            <button type="submit">Add secret</button>
+          </div>
+        </form>
+        <label class="check push-toggle"><input type="checkbox" id="secret-push"> <code>git push</code> the secrets repo after each change</label>
+      </div>
+      <p class="hint">Write-only: a value can be set or replaced here, but never shown — nothing on this page decrypts. Storing a secret needs no YubiKey (it is encrypted to the recipients); only granting one does.
+        To edit a value in place, use <code>mintk secret edit &lt;name&gt;</code> (or <code>mintk i</code> → Manage secrets).</p>
     </section>
 
     <section data-panel="scopes" hidden>
